@@ -1,0 +1,481 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import "Model.js" as Model
+
+Item {
+  id: root
+
+  property var settings: ({})
+
+  property bool installed: false
+  property bool daemon: false
+  property bool running: false
+  property bool connecting: false
+  // Optimistic toggle: -1 follows the daemon, 0/1 until reality catches up.
+  property int _desired: -1
+  readonly property bool active: _desired === -1 ? running : (_desired === 1)
+  property bool refreshing: false
+  property bool twoHop: true
+  property bool ipv6: true
+  property bool circumvention: false
+  property bool gatewayIndependence: false
+  property bool lanAllow: true
+  property bool adBlock: false
+  property bool customDns: false
+  property bool residentialExit: false
+  property string statusText: "Checking…"
+  property string state: "Unknown"
+  property string entryCountry: ""
+  property string exitCountry: ""
+  property bool accountSet: false
+  property bool bandwidthExceeded: false
+  property double usedGb: 0
+  property double limitGb: 0
+  property string resetUtc: ""
+  property bool quotaKnown: false
+  property double quotaPercent: 0
+  property var entryCountries: []
+  property var exitCountries: []
+  property string actionStatus: ""
+  property string lastError: ""
+
+  property bool loggingIn: false
+
+  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 5, 3600)
+  readonly property bool busy: actionProcess.running || connecting || loginProcess.running
+  readonly property bool quotaWarn: Model.quotaWarning(quotaPercent, bandwidthExceeded)
+  readonly property string blockReason: Model.connectBlockReason({
+    installed: root.installed,
+    daemon: root.daemon,
+    running: root.running,
+    accountSet: root.accountSet
+  })
+  readonly property string blockMessage: Model.connectBlockMessage(blockReason)
+  readonly property string helperPath: resolveScript("status.py")
+  readonly property string loginPath: resolveScript("login.py")
+
+  property string _dumpOutput: ""
+  property string _dumpError: ""
+  property string _actionOutput: ""
+  property string _actionError: ""
+  property string _loginSecret: ""
+  property string _loginOutput: ""
+  property string _loginError: ""
+
+  function setting(name, fallback) {
+    var value = settings ? settings[name] : undefined
+    return value === undefined || value === null ? fallback : value
+  }
+
+  function intSetting(name, fallback, min, max) {
+    var n = parseInt(String(setting(name, fallback)), 10)
+    if (!isFinite(n)) n = fallback
+    if (n < min) n = min
+    if (n > max) n = max
+    return n
+  }
+
+  function resolveScript(name) {
+    var url = Qt.resolvedUrl(name)
+    var path = url ? String(url) : ""
+    if (path.indexOf("file://") === 0) path = path.substring(7)
+    try {
+      return decodeURIComponent(path)
+    } catch (e) {
+      return path
+    }
+  }
+
+  function applySnapshot(raw) {
+    var parsed = Model.parseStatus(raw)
+    installed = parsed.installed === true
+    daemon = parsed.daemon === true
+    running = parsed.running === true
+    connecting = parsed.connecting === true
+    _desired = Model.reconcileDesired(_desired, running, connecting)
+    twoHop = parsed.twoHop === true
+    ipv6 = parsed.ipv6 !== false
+    circumvention = parsed.circumvention === true
+    gatewayIndependence = parsed.gatewayIndependence === true
+    lanAllow = parsed.lanAllow !== false
+    adBlock = parsed.adBlock === true
+    customDns = parsed.customDns === true
+    residentialExit = parsed.residentialExit === true
+    statusText = String(parsed.statusText || (installed ? "Disconnected" : "Not installed"))
+    state = String(parsed.state || "Unknown")
+    entryCountry = String(parsed.entryCountry || "")
+    exitCountry = String(parsed.exitCountry || "")
+    accountSet = parsed.accountSet === true
+    bandwidthExceeded = parsed.bandwidthExceeded === true
+    usedGb = Number(parsed.usedGb || 0)
+    limitGb = Number(parsed.limitGb || 0)
+    resetUtc = String(parsed.resetUtc || "")
+    quotaKnown = parsed.quotaKnown === true
+    quotaPercent = Number(parsed.quotaPercent || 0)
+    if (!installed) {
+      entryCountries = []
+      exitCountries = []
+    } else {
+      if (parsed.entryCountries && parsed.entryCountries.length > 0) entryCountries = parsed.entryCountries
+      if (parsed.exitCountries && parsed.exitCountries.length > 0) exitCountries = parsed.exitCountries
+    }
+    lastError = String(parsed.lastError || "")
+    if (!installed) statusText = "Not installed"
+    else if (!running && !connecting) {
+      var blocked = Model.connectBlockMessage(Model.connectBlockReason({
+        installed: installed,
+        daemon: daemon,
+        running: running,
+        accountSet: accountSet
+      }))
+      if (blocked !== "") statusText = blocked
+      else if (!daemon) statusText = parsed.statusText || "Daemon unavailable"
+    }
+  }
+
+  function applyListen(raw) {
+    var text = String(raw || "").trim()
+    if (text === "") return
+    try {
+      var parsed = JSON.parse(text)
+    } catch (e) {
+      return
+    }
+    if (!parsed || typeof parsed !== "object") return
+    if (parsed.running !== undefined) running = parsed.running === true
+    if (parsed.connecting !== undefined) connecting = parsed.connecting === true
+    if (parsed.state) state = String(parsed.state)
+    if (parsed.statusText) statusText = String(parsed.statusText)
+    if (parsed.bandwidthExceeded !== undefined) bandwidthExceeded = parsed.bandwidthExceeded === true
+    if (parsed.lastError !== undefined) lastError = String(parsed.lastError || "")
+    _desired = Model.reconcileDesired(_desired, running, connecting)
+  }
+
+  function refresh(forceLists) {
+    if (dumpProcess.running || helperPath === "") return
+    _dumpOutput = ""
+    _dumpError = ""
+    refreshing = true
+    dumpProcess.command = forceLists === true
+      ? ["python3", helperPath, "--refresh-lists"]
+      : ["python3", helperPath]
+    dumpProcess.running = true
+    if (!pollWatchdog.running) pollWatchdog.start()
+  }
+
+  function ensureListen() {
+    if (!installed || !daemon || listenProcess.running || helperPath === "") return
+    listenProcess.command = ["python3", helperPath, "listen"]
+    listenProcess.running = true
+  }
+
+  function warnConnectBlocked() {
+    if (blockMessage === "") return
+    actionStatus = blockMessage
+    actionStatusTimer.restart()
+  }
+
+  function toggle() {
+    if (!installed) return false
+    if (state === "Error" || connecting) {
+      hardDisconnect()
+      return true
+    }
+    if (active || running) {
+      disconnectVpn()
+      return true
+    }
+    return connectVpn()
+  }
+
+  function connectVpn() {
+    if (!installed || actionProcess.running) return false
+    if (blockReason !== "") {
+      warnConnectBlocked()
+      return false
+    }
+    _desired = 1
+    connecting = true
+    runAction(["nym-vpnc", "connect"])
+    return true
+  }
+
+  function disconnectVpn() {
+    if (!installed || actionProcess.running) return
+    _desired = 0
+    connecting = false
+    runAction(["nym-vpnc", "disconnect"])
+  }
+
+  function hardDisconnect() {
+    if (!installed) return
+    _desired = 0
+    connecting = false
+    if (actionProcess.running) {
+      actionProcess.running = false
+      Qt.callLater(function() { runAction(["nym-vpnc", "disconnect", "--wait"]) })
+    } else {
+      runAction(["nym-vpnc", "disconnect", "--wait"])
+    }
+  }
+
+  function hardReset() {
+    if (!installed) return
+    hardDisconnect()
+  }
+
+  function setTwoHop(enabled) {
+    if (!installed || actionProcess.running) return
+    var on = enabled === true || enabled === "wg" || enabled === "on"
+    twoHop = on
+    runAction(["nym-vpnc", "tunnel", "set", "--two-hop", on ? "on" : "off"])
+  }
+
+  function setIpv6(enabled) {
+    if (!installed || actionProcess.running) return
+    ipv6 = enabled === true
+    runAction(["nym-vpnc", "tunnel", "set", "--ipv6", ipv6 ? "on" : "off"])
+  }
+
+  function setCircumvention(enabled) {
+    if (!installed || actionProcess.running) return
+    circumvention = enabled === true
+    runAction(["nym-vpnc", "tunnel", "set", "--circumvention-transports", circumvention ? "on" : "off"])
+  }
+
+  function setLanAllow(enabled) {
+    if (!installed || actionProcess.running) return
+    lanAllow = enabled === true
+    runAction(["nym-vpnc", "lan", "set", lanAllow ? "allow" : "block"])
+  }
+
+  function setAdBlock(enabled) {
+    if (!installed || actionProcess.running) return
+    adBlock = enabled === true
+    runAction(["nym-vpnc", "ad-block", "set", adBlock ? "on" : "off"])
+  }
+
+  function setCustomDns(enabled) {
+    if (!installed || actionProcess.running) return
+    customDns = enabled === true
+    runAction(["nym-vpnc", "dns", customDns ? "enable" : "disable"])
+  }
+
+  function setResidentialExit(enabled) {
+    if (!installed || actionProcess.running) return
+    residentialExit = enabled === true
+    runAction(["nym-vpnc", "gateway", "set", "--residential-exit", residentialExit ? "on" : "off"])
+  }
+
+  function setEntryCountry(code) {
+    var value = Model.asCountryCodes([code])[0] || ""
+    if (!installed || value === "" || actionProcess.running) return
+    entryCountry = value
+    runAction(["nym-vpnc", "gateway", "set", "--entry-country", value])
+  }
+
+  function setExitCountry(code) {
+    var value = Model.asCountryCodes([code])[0] || ""
+    if (!installed || value === "" || actionProcess.running) return
+    exitCountry = value
+    runAction(["nym-vpnc", "gateway", "set", "--exit-country", value])
+  }
+
+  function openAccount() {
+    Quickshell.execDetached(["omarchy-launch-browser", "https://nym.com/account/create"])
+  }
+
+  function setAccount(phrase) {
+    if (!installed || loginProcess.running || accountSet || loginPath === "") return
+    if (!Model.isMnemonicShape(phrase)) {
+      lastError = "Invalid recovery phrase"
+      actionStatus = lastError
+      actionStatusTimer.restart()
+      return
+    }
+    _loginSecret = String(phrase)
+    _loginOutput = ""
+    _loginError = ""
+    loggingIn = true
+    lastError = ""
+    actionStatus = "Signing in…"
+    loginProcess.command = ["python3", loginPath]
+    loginProcess.running = true
+  }
+
+  function runAction(command) {
+    if (actionProcess.running) return
+    _actionOutput = ""
+    _actionError = ""
+    actionProcess.command = command
+    actionProcess.running = true
+  }
+
+  function elideStatus(text) {
+    var value = String(text || "").replace(/\s+/g, " ").trim()
+    return value.length > 140 ? value.substring(0, 137) + "…" : value
+  }
+
+  Timer {
+    id: refreshTimer
+    interval: root.refreshIntervalSec * 1000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: startupRamp
+    property int ticks: 0
+    interval: 2000
+    repeat: true
+    running: true
+    onTriggered: {
+      ticks += 1
+      if (!root.daemon || root.running || ticks >= 5) startupRamp.running = false
+      else root.refresh()
+    }
+  }
+
+  Timer {
+    id: delayedRefresh
+    interval: 800
+    repeat: false
+    onTriggered: root.refresh(true)
+  }
+
+  Timer {
+    id: pollWatchdog
+    interval: 20000
+    repeat: false
+    onTriggered: {
+      if (dumpProcess.running) {
+        dumpProcess.running = false
+        root.refreshing = false
+        if (root.lastError === "") root.lastError = "NymVPN status timed out"
+      }
+    }
+  }
+
+  Timer {
+    id: actionStatusTimer
+    interval: 2200
+    repeat: false
+    onTriggered: root.actionStatus = ""
+  }
+
+  Process {
+    id: dumpProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: dumpStdout; waitForEnd: true; onStreamFinished: root._dumpOutput = text }
+    stderr: StdioCollector { id: dumpStderr; waitForEnd: true; onStreamFinished: root._dumpError = text }
+    onExited: function(exitCode) {
+      root.refreshing = false
+      pollWatchdog.stop()
+      var stdout = String(dumpStdout.text || root._dumpOutput || "")
+      var stderr = String(dumpStderr.text || root._dumpError || "")
+      if (stdout.trim() !== "") root.applySnapshot(stdout)
+      else {
+        root.lastError = root.elideStatus(stderr || "Could not read NymVPN status")
+        if (!root.installed) root.statusText = "Not installed"
+      }
+      if (root.installed && root.daemon) root.ensureListen()
+    }
+  }
+
+  Process {
+    id: listenProcess
+    running: false
+    command: []
+    stdout: SplitParser {
+      onRead: function(data) { root.applyListen(data) }
+    }
+    onExited: function() {
+      if (root.installed && root.daemon) listenRestart.restart()
+    }
+  }
+
+  Timer {
+    id: listenRestart
+    interval: 2000
+    repeat: false
+    onTriggered: root.ensureListen()
+  }
+
+  Process {
+    id: actionProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: actionStdout; waitForEnd: true; onStreamFinished: root._actionOutput = text }
+    stderr: StdioCollector { id: actionStderr; waitForEnd: true; onStreamFinished: root._actionError = text }
+    onExited: function(exitCode) {
+      var stdout = String(actionStdout.text || root._actionOutput || "")
+      var stderr = String(actionStderr.text || root._actionError || "")
+      if (exitCode !== 0) {
+        root._desired = -1
+        root.connecting = false
+        var command = actionProcess.command || []
+        var connectFailed = false
+        for (var i = 0; i < command.length; i++) {
+          if (command[i] === "connect") {
+            connectFailed = true
+            break
+          }
+        }
+        if (connectFailed && root.blockMessage !== "") {
+          root.lastError = root.blockMessage
+        } else {
+          root.lastError = root.elideStatus(stderr || stdout || "NymVPN command failed")
+        }
+        root.actionStatus = root.lastError
+        actionStatusTimer.restart()
+      } else {
+        root.lastError = ""
+        root.actionStatus = ""
+      }
+      delayedRefresh.restart()
+    }
+  }
+
+  Process {
+    id: loginProcess
+    running: false
+    command: []
+    stdinEnabled: true
+    stdout: StdioCollector { id: loginStdout; waitForEnd: true; onStreamFinished: root._loginOutput = text }
+    stderr: StdioCollector { id: loginStderr; waitForEnd: true; onStreamFinished: root._loginError = text }
+    onStarted: {
+      write(root._loginSecret + "\n")
+      root._loginSecret = ""
+    }
+    onExited: function(exitCode) {
+      root.loggingIn = false
+      root._loginSecret = ""
+      var stdout = String(loginStdout.text || root._loginOutput || "").trim()
+      var parsed = null
+      try {
+        parsed = JSON.parse(stdout)
+      } catch (e) {
+        parsed = null
+      }
+      if (parsed && typeof parsed === "object" && parsed.ok === true) {
+        root.lastError = ""
+        root.actionStatus = "Account saved"
+        actionStatusTimer.restart()
+      } else {
+        var message = "Could not save account"
+        if (parsed && parsed.error) message = String(parsed.error)
+        root.lastError = root.elideStatus(message)
+        root.actionStatus = root.lastError
+        actionStatusTimer.restart()
+      }
+      root._loginOutput = ""
+      root._loginError = ""
+      delayedRefresh.restart()
+    }
+  }
+}

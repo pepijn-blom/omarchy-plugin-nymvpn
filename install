@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# omarchy:summary=Install the Omarchy NymVPN bar plugin
+# omarchy:args=[--no-enable] [--uninstall]
+
+set -euo pipefail
+
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ID="pepijn-blom.nymvpn"
+DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+enable_after=true
+
+usage() {
+  echo "Usage: ./install [--no-enable] [--uninstall]"
+}
+
+while (($#)); do
+  case "$1" in
+    --no-enable)
+      enable_after=false
+      shift
+      ;;
+    --uninstall)
+      exec "$PLUGIN_DIR/uninstall"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "install: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+echo "=========================================="
+echo "    Installing Omarchy NymVPN Plugin"
+echo "=========================================="
+echo ""
+
+POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
+if [[ ! -f "$POLKIT_RULE_FILE" && ! -f "/usr/share/polkit-1/rules.d/50-nym-vpn.rules" ]]; then
+  echo "==> Configuring Polkit rule for NymVPN daemon access (requires sudo)..."
+  if command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p "/etc/polkit-1/rules.d"
+    sudo tee "$POLKIT_RULE_FILE" >/dev/null << 'EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id === "com.nymvpn.vpnd.unix-access" &&
+        (subject.isInGroup("wheel") || subject.isInGroup("nym-vpn") || subject.isInGroup("sudo"))) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+    echo "    Polkit rule installed at $POLKIT_RULE_FILE"
+  else
+    echo "WARNING: sudo not found. Please ensure $POLKIT_RULE_FILE exists to avoid password prompt loops." >&2
+  fi
+fi
+
+if ! command -v rsync >/dev/null 2>&1; then
+  echo "install: rsync is required" >&2
+  exit 1
+fi
+
+mkdir -p "$HOME/.config/omarchy/plugins"
+chmod +x "$PLUGIN_DIR/status.py" "$PLUGIN_DIR/login.py" "$PLUGIN_DIR/install" "$PLUGIN_DIR/uninstall"
+
+echo "==> Copying plugin into $DEST..."
+mkdir -p "$DEST"
+rsync -a --delete \
+  --exclude '.git/' \
+  --exclude '.github/' \
+  --exclude '__pycache__/' \
+  --exclude '.pytest_cache/' \
+  --exclude 'tests/' \
+  --exclude '*.pyc' \
+  --exclude '.gitignore' \
+  "$PLUGIN_DIR/" "$DEST/"
+
+if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+  echo "==> Validating plugin..."
+  omarchy-plugin-validate "$DEST"
+fi
+
+if command -v omarchy-shell >/dev/null 2>&1; then
+  echo "==> Rescanning Omarchy shell plugins..."
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+fi
+
+if [[ "$enable_after" == true ]] && command -v omarchy-plugin-enable >/dev/null 2>&1; then
+  echo "==> Enabling $PLUGIN_ID on the right bar..."
+  omarchy-plugin-enable "$PLUGIN_ID" --section right || true
+fi
+
+echo ""
+echo "Omarchy NymVPN plugin installed."
+echo ""
+echo "  • Bar widget id: $PLUGIN_ID"
+echo "  • Requires nym-vpnc on PATH and a running nym-vpnd daemon"
+echo "  • Left click the icon for locations and data usage"
+echo "  • Right click toggles the tunnel"
+echo "  • Middle click refreshes status"
+echo ""
+if ! command -v nym-vpnc >/dev/null 2>&1; then
+  echo "  Note: nym-vpnc was not found on PATH. The widget will show Not installed"
+  echo "  until NymVPN is installed."
+  echo ""
+fi

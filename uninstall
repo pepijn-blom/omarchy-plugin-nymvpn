@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Uninstall the Omarchy NymVPN bar plugin
+
+set -euo pipefail
+
+PLUGIN_ID="pepijn-blom.nymvpn"
+DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+
+echo "=========================================="
+echo "    Uninstalling Omarchy NymVPN Plugin"
+echo "=========================================="
+echo ""
+
+if command -v omarchy-plugin-disable >/dev/null 2>&1; then
+  echo "==> Disabling $PLUGIN_ID..."
+  omarchy-plugin-disable "$PLUGIN_ID" 2>/dev/null || true
+fi
+
+if [[ -d "$DEST" ]]; then
+  echo "==> Removing $DEST..."
+  rm -rf "$DEST"
+fi
+
+if command -v omarchy-shell >/dev/null 2>&1; then
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+fi
+
+echo ""
+echo "Omarchy NymVPN plugin removed."
