@@ -152,6 +152,73 @@ function testReconcileDesired() {
   assert.strictEqual(Model.reconcileDesired(0, false, false), -1)
 }
 
+function testProcessNames() {
+  assert.deepStrictEqual(Model.asProcessNames(["  AgY ", "agy", "firefox", "agy/bin", "", null]), ["agy", "firefox"])
+  assert.deepStrictEqual(Model.asProcessNames("agy"), [])
+  assert.deepStrictEqual(Model.asProcessNames(undefined), [])
+}
+
+function testParseSplitSync() {
+  const parsed = Model.parseSplitSync(JSON.stringify({
+    ok: true,
+    supported: true,
+    names: ["agy", "agy", "bad/name"],
+    attached: [{ name: "agy", pids: [42, 43] }, { name: "x", pids: "nope" }, null]
+  }))
+  assert.strictEqual(parsed.ok, true)
+  assert.strictEqual(parsed.supported, true)
+  assert.deepStrictEqual(parsed.names, ["agy"])
+  assert.deepStrictEqual(parsed.attached, [{ name: "agy", pids: [42, 43] }])
+}
+
+function testParseSplitSyncJunk() {
+  const empty = Model.parseSplitSync("")
+  assert.strictEqual(empty.ok, false)
+  assert.strictEqual(empty.supported, false)
+  assert.deepStrictEqual(empty.names, [])
+  assert.deepStrictEqual(empty.attached, [])
+}
+
+function testParseRunningProcesses() {
+  const rows = Model.parseRunningProcesses(JSON.stringify({
+    ok: true,
+    processes: [
+      { name: "antigravity", pids: [42, 43], exe: "/opt/antigravity/antigravity" },
+      { name: "agy/../bin", pids: [1] },
+      { name: "firefox", pids: ["88"], exe: "/usr/lib/firefox/firefox" }
+    ]
+  }))
+  assert.strictEqual(rows.length, 2)
+  assert.strictEqual(rows[0].name, "antigravity")
+  assert.deepStrictEqual(rows[0].pids, [42, 43])
+  assert.strictEqual(rows[1].name, "firefox")
+  assert.deepStrictEqual(rows[1].pids, [88])
+}
+
+function testProcessOptions() {
+  const options = Model.processOptions(
+    [{ name: "antigravity", pids: [1, 2] }, { name: "firefox", pids: [3] }],
+    ["firefox"]
+  )
+  assert.strictEqual(options.length, 1)
+  assert.strictEqual(options[0].value, "antigravity")
+  assert.strictEqual(options[0].label, "antigravity")
+  assert.strictEqual(options[0].description, "2 processes")
+}
+
+function testAttachedCount() {
+  const attached = [{ name: "agy", pids: [1, 2] }]
+  assert.strictEqual(Model.attachedCount("agy", attached), 2)
+  assert.strictEqual(Model.attachedCount("firefox", attached), 0)
+}
+
+function testParseStatusSplitDefaults() {
+  const empty = Model.parseStatus("")
+  assert.strictEqual(empty.splitSupported, true)
+  assert.deepStrictEqual(empty.splitExclude, [])
+  assert.deepStrictEqual(empty.splitAttached, [])
+}
+
 testParseStatusDefaults()
 testParseStatusJson()
 testParseStatusCoercesAndDropsJunk()
@@ -164,4 +231,11 @@ testMnemonicShape()
 testConnectBlockReason()
 testConnectBlockMessage()
 testReconcileDesired()
+testProcessNames()
+testParseSplitSync()
+testParseSplitSyncJunk()
+testParseRunningProcesses()
+testProcessOptions()
+testAttachedCount()
+testParseStatusSplitDefaults()
 console.log("ok")

@@ -15,6 +15,7 @@ This is an unofficial third-party Quickshell plugin (`pepijn-blom.nymvpn`). It t
 - Fair-use usage (`used / limit` plus reset time)
 - Sign in with a recovery phrase when no account is stored on the device
 - Collapsible settings: ads, IPv6, LAN bypass, anti-censorship, residential exit, custom DNS
+- Bypass VPN: exclude named processes (type a name like `agy`, or pick from what is running)
 
 ## Icon
 
@@ -37,7 +38,7 @@ Inside the panel:
 - `r`: refresh status
 - `x` / `d`: force disconnect
 - `esc`: close (or clear the recovery-phrase field if it is focused)
-- Settings header: expand or collapse. On a setting row, `enter` / `space` or left/right toggles it.
+- Settings header: expand or collapse. On a setting row, `enter` / `space` or left/right toggles it. Below the toggles, Bypass VPN lists excluded processes; `enter` removes a name, focuses the add field, or opens the running-process picker.
 - When no account is stored: connect attempts (switch, `t`, right-click, IPC) show **Sign in to connect** and focus the recovery-phrase field. `enter` on the account section also focuses the field. `enter` in the field signs in.
 
 ## Requirements
@@ -85,6 +86,7 @@ If the icon does not appear after the first install, run `omarchy restart shell`
 ## Usage
 
 - **Bar:** left click for the panel, right click to connect/disconnect, middle click to refresh. Right click does not start a tunnel when no account is stored — it opens the panel and focuses sign-in.
+- **Bypass VPN:** under Settings, add process names that should skip the tunnel (for example `agy` if Antigravity misbehaves through Nym). You can type a name or pick from currently running processes. Linux NymVPN only supports exclude-by-PID, so the plugin keeps matching processes attached while you are connected. Attaching a PID does not migrate sockets already opened through the tunnel — restart the app, or reconnect, after adding it.
 - **Sign in:** if the panel shows no account on this device, paste your recovery phrase and choose Sign in (or Create account to open the Nym site). The power switch, `t`, and `toggleVpn` / `connectVpn` IPC all refuse connect until then.
 - **IPC:** `omarchy-shell shell summon pepijn-blom.nymvpn`, `omarchy-shell pepijn-blom.nymvpn toggleVpn`, `omarchy-shell pepijn-blom.nymvpn status`. Blocked connects return `Sign in to connect` (or `nym-vpnd is not running`) instead of `ok`.
 
@@ -103,7 +105,7 @@ make test
 make validate   # tests plus `omarchy plugin validate .`
 ```
 
-`status.py` shells out to `nym-vpnc`. There is no machine-readable CLI today, so parsers are covered by fixtures in `tests/test_status.py`. `login.py` is covered in `tests/test_login.py`. Gateway lists are cached under `$XDG_CACHE_HOME/omarchy-nymvpn` for five minutes.
+`status.py` shells out to `nym-vpnc`. There is no machine-readable CLI today, so parsers are covered by fixtures in `tests/test_status.py`. `login.py` is covered in `tests/test_login.py`. `split.py` matches process names against `/proc` and syncs PIDs via `nym-vpnc split-tunnel`; parsers and matching are covered in `tests/test_split.py`. Gateway lists are cached under `$XDG_CACHE_HOME/omarchy-nymvpn` for five minutes.
 
 ## Uninstall
 

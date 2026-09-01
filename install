@@ -64,7 +64,7 @@ if ! command -v rsync >/dev/null 2>&1; then
 fi
 
 mkdir -p "$HOME/.config/omarchy/plugins"
-chmod +x "$PLUGIN_DIR/status.py" "$PLUGIN_DIR/login.py" "$PLUGIN_DIR/install" "$PLUGIN_DIR/uninstall"
+chmod +x "$PLUGIN_DIR/status.py" "$PLUGIN_DIR/login.py" "$PLUGIN_DIR/split.py" "$PLUGIN_DIR/install" "$PLUGIN_DIR/uninstall"
 
 echo "==> Copying plugin into $DEST..."
 mkdir -p "$DEST"

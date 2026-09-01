@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "pepijn-blom.nymvpn",
   "name": "NymVPN",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "Pepijn Blom",
   "license": "MIT",
-  "description": "NymVPN status, connect/disconnect, entry and exit country switching, and fair-use data usage in the Omarchy bar.",
+  "description": "NymVPN status, connect/disconnect, entry and exit country switching, split-tunnel process bypass, and fair-use data usage in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "NymVPN",
-    "description": "Toggle NymVPN, switch entry and exit countries, and watch fair-use data.",
+    "description": "Toggle NymVPN, switch entry and exit countries, bypass apps, and watch fair-use data.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",

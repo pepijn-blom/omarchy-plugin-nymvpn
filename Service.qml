@@ -40,10 +40,14 @@ Item {
   property var exitCountries: []
   property string actionStatus: ""
   property string lastError: ""
+  property bool splitSupported: true
+  property var splitAttached: []
+  property var runningProcesses: []
 
   property bool loggingIn: false
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 5, 3600)
+  readonly property var splitExclude: Model.asProcessNames(settings ? settings.splitExclude : [])
   readonly property bool busy: actionProcess.running || connecting || loginProcess.running
   readonly property bool quotaWarn: Model.quotaWarning(quotaPercent, bandwidthExceeded)
   readonly property string blockReason: Model.connectBlockReason({
@@ -55,6 +59,7 @@ Item {
   readonly property string blockMessage: Model.connectBlockMessage(blockReason)
   readonly property string helperPath: resolveScript("status.py")
   readonly property string loginPath: resolveScript("login.py")
+  readonly property string splitPath: resolveScript("split.py")
 
   property string _dumpOutput: ""
   property string _dumpError: ""
@@ -63,6 +68,10 @@ Item {
   property string _loginSecret: ""
   property string _loginOutput: ""
   property string _loginError: ""
+  property string _splitSyncOutput: ""
+  property string _splitListOutput: ""
+  property string _splitGetOutput: ""
+  property bool _splitProbed: false
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -276,6 +285,34 @@ Item {
     runAction(["nym-vpnc", "gateway", "set", "--entry-country", value])
   }
 
+  function syncSplit(names) {
+    if (!installed || splitSyncProcess.running || splitPath === "") return
+    var list = names !== undefined ? Model.asProcessNames(names) : splitExclude
+    var command = ["python3", splitPath, "sync"]
+    for (var i = 0; i < list.length; i++) {
+      command.push("--exclude")
+      command.push(list[i])
+    }
+    _splitSyncOutput = ""
+    splitSyncProcess.command = command
+    splitSyncProcess.running = true
+  }
+
+  function listRunning() {
+    if (!installed || splitListProcess.running || splitPath === "") return
+    _splitListOutput = ""
+    splitListProcess.command = ["python3", splitPath, "list-running"]
+    splitListProcess.running = true
+  }
+
+  function probeSplit() {
+    if (!installed || !daemon || _splitProbed || splitGetProcess.running || splitPath === "") return
+    _splitProbed = true
+    _splitGetOutput = ""
+    splitGetProcess.command = ["python3", splitPath, "get"]
+    splitGetProcess.running = true
+  }
+
   function setExitCountry(code) {
     var value = Model.asCountryCodes([code])[0] || ""
     if (!installed || value === "" || actionProcess.running) return
@@ -383,7 +420,15 @@ Item {
         root.lastError = root.elideStatus(stderr || "Could not read NymVPN status")
         if (!root.installed) root.statusText = "Not installed"
       }
-      if (root.installed && root.daemon) root.ensureListen()
+      if (root.installed && root.daemon) {
+        root.ensureListen()
+        root.probeSplit()
+      } else {
+        root._splitProbed = false
+        root.splitSupported = true
+        root.splitAttached = []
+        root.runningProcesses = []
+      }
     }
   }
 
@@ -476,6 +521,59 @@ Item {
       root._loginOutput = ""
       root._loginError = ""
       delayedRefresh.restart()
+    }
+  }
+
+  onRunningChanged: if (running && splitExclude.length > 0) syncSplit()
+
+  Timer {
+    id: splitSyncTimer
+    interval: 2000
+    repeat: true
+    running: root.running && root.splitExclude.length > 0 && root.installed
+    onTriggered: root.syncSplit()
+  }
+
+  Process {
+    id: splitSyncProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: splitSyncStdout; waitForEnd: true; onStreamFinished: root._splitSyncOutput = text }
+    onExited: function() {
+      var stdout = String(splitSyncStdout.text || root._splitSyncOutput || "")
+      var parsed = Model.parseSplitSync(stdout)
+      if (parsed.supported === true || parsed.supported === false) root.splitSupported = parsed.supported
+      if (parsed.ok) root.splitAttached = parsed.attached
+      else if (!parsed.supported) root.splitAttached = []
+    }
+  }
+
+  Process {
+    id: splitListProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: splitListStdout; waitForEnd: true; onStreamFinished: root._splitListOutput = text }
+    onExited: function() {
+      var stdout = String(splitListStdout.text || root._splitListOutput || "")
+      root.runningProcesses = Model.parseRunningProcesses(stdout)
+    }
+  }
+
+  Process {
+    id: splitGetProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: splitGetStdout; waitForEnd: true; onStreamFinished: root._splitGetOutput = text }
+    onExited: function() {
+      var stdout = String(splitGetStdout.text || root._splitGetOutput || "").trim()
+      var parsed = null
+      try {
+        parsed = JSON.parse(stdout)
+      } catch (e) {
+        parsed = null
+      }
+      if (parsed && typeof parsed === "object" && parsed.supported === false) root.splitSupported = false
+      else if (parsed && parsed.supported === true) root.splitSupported = true
     }
   }
 }

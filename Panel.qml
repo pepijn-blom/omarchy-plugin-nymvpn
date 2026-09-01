@@ -16,6 +16,7 @@ Panel {
   property string focusSection: "header"
   property int modeIndex: 0
   property int settingIndex: 0
+  property int splitIndex: 0
   property bool cursorActive: false
   property bool pendingLoginFocus: false
   property int phraseIndex: 0
@@ -56,8 +57,12 @@ Panel {
     var reset = Model.resetLabel(nym.resetUtc)
     return reset !== "" ? text + " · " + reset : text
   }
-  readonly property bool pickerOpen: entryPicker.popupOpen || exitPicker.popupOpen
+  readonly property bool pickerOpen: entryPicker.popupOpen || exitPicker.popupOpen || splitPicker.popupOpen
   readonly property bool settingsOpen: settings.settingsOpen === true
+  readonly property var splitNames: nym.splitExclude
+  readonly property bool splitVisible: nym.installed && nym.splitSupported
+  readonly property int splitRowCount: splitNames.length + 2
+  readonly property var runningProcessOptions: Model.processOptions(nym.runningProcesses, splitNames)
   readonly property var settingRows: [
     { key: "adBlock", label: "Block ads", description: "Block ads and trackers" },
     { key: "ipv6", label: "IPv6", description: "Allow IPv6 connections" },
@@ -113,6 +118,39 @@ Panel {
     else if (key === "customDns") nym.setCustomDns(!nym.customDns)
   }
 
+  function persistSplitExclude(names) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var entry = { id: root.moduleName }
+    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
+    entry.splitExclude = Model.asProcessNames(names)
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function addSplitName(name) {
+    var next = Model.asProcessNames(root.splitNames.concat([name]))
+    persistSplitExclude(next)
+    nym.syncSplit(next)
+    nym.listRunning()
+  }
+
+  function removeSplitName(name) {
+    var key = Model.asProcessNames([name])[0] || ""
+    var next = []
+    var current = root.splitNames
+    for (var i = 0; i < current.length; i++) {
+      if (current[i] !== key) next.push(current[i])
+    }
+    persistSplitExclude(next)
+    nym.syncSplit(next)
+  }
+
+  function submitSplitName() {
+    var name = splitNameField.text
+    splitNameField.text = ""
+    root.addSplitName(name)
+    keyCatcher.forceActiveFocus()
+  }
+
   function persistSettingsOpen(open) {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
     var entry = { id: root.moduleName }
@@ -123,7 +161,8 @@ Panel {
 
   function setSettingsOpen(open) {
     persistSettingsOpen(open)
-    if (!open && focusSection === "setting") focusSection = "settings"
+    if (open) nym.listRunning()
+    if (!open && (focusSection === "setting" || focusSection === "split")) focusSection = "settings"
   }
 
   function ensureCursor() {
@@ -131,9 +170,12 @@ Panel {
     if (modeIndex > 1) modeIndex = 1
     if (settingIndex < 0) settingIndex = 0
     if (settingIndex > settingRows.length - 1) settingIndex = Math.max(0, settingRows.length - 1)
+    if (splitIndex < 0) splitIndex = 0
+    if (splitIndex > splitRowCount - 1) splitIndex = Math.max(0, splitRowCount - 1)
     if (focusSection === "account" && nym.accountSet) focusSection = "mode"
-    if (focusSection === "setting" && !settingsOpen) focusSection = "settings"
-    if ((focusSection === "mode" || focusSection === "settings" || focusSection === "setting" || focusSection === "account") && !nym.installed)
+    if ((focusSection === "setting" || focusSection === "split") && !settingsOpen) focusSection = "settings"
+    if (focusSection === "split" && !splitVisible) focusSection = "settings"
+    if ((focusSection === "mode" || focusSection === "settings" || focusSection === "setting" || focusSection === "split" || focusSection === "account") && !nym.installed)
       focusSection = "header"
   }
 
@@ -163,6 +205,22 @@ Panel {
       if (nextSetting < 0) {
         focusSection = "settings"
         return
+      }
+      if (nextSetting >= settingRows.length && root.splitVisible) {
+        splitIndex = 0
+        focusSection = "split"
+      }
+      return
+    }
+    if (focusSection === "split") {
+      var nextSplit = splitIndex + dy
+      if (nextSplit >= 0 && nextSplit < splitRowCount) {
+        splitIndex = nextSplit
+        return
+      }
+      if (nextSplit < 0) {
+        settingIndex = settingRows.length - 1
+        focusSection = "setting"
       }
       return
     }
@@ -230,6 +288,11 @@ Panel {
     else if (focusSection === "exit") exitPicker.open()
     else if (focusSection === "settings") setSettingsOpen(!settingsOpen)
     else if (focusSection === "setting") toggleSetting(settingRows[settingIndex].key)
+    else if (focusSection === "split") {
+      if (splitIndex < splitNames.length) removeSplitName(splitNames[splitIndex])
+      else if (splitIndex === splitNames.length) Qt.callLater(function() { splitNameField.forceActiveFocus() })
+      else splitPicker.open()
+    }
     else if (focusSection === "account") focusLogin()
   }
 
@@ -245,6 +308,7 @@ Panel {
     if (opened) {
       if (!pendingLoginFocus) cursorActive = false
       nym.refresh(true)
+      nym.listRunning()
       if (pendingLoginFocus) {
         pendingLoginFocus = false
         Qt.callLater(function() { root.focusLogin() })
@@ -327,7 +391,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.pickerOpen || phraseField.activeFocus
+      blocked: root.pickerOpen || phraseField.activeFocus || splitNameField.activeFocus
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
@@ -795,6 +859,135 @@ Panel {
                       root.settingIndex = index
                     }
                     onClicked: root.toggleSetting(root.settingRows[index].key)
+                  }
+                }
+
+                Column {
+                  visible: root.splitVisible
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Text {
+                    text: "BYPASS VPN"
+                    color: Qt.darker(root.foreground, 1.4)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Text {
+                    width: parent.width
+                    text: "Restart an app (or reconnect) if it was already using the tunnel."
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.WordWrap
+                  }
+
+                  Repeater {
+                    model: root.splitNames.length
+
+                    CursorSurface {
+                      width: settingsList.width
+                      implicitHeight: Style.space(32)
+                      hasCursor: root.cursorActive && root.focusSection === "split" && root.splitIndex === index
+                      foreground: root.foreground
+
+                      MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onEntered: {
+                          root.cursorActive = true
+                          root.focusSection = "split"
+                          root.splitIndex = index
+                        }
+                      }
+
+                      Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: Style.space(4)
+                        anchors.rightMargin: Style.space(4)
+                        spacing: Style.space(8)
+
+                        Text {
+                          text: root.splitNames[index]
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.bodySmall
+                          anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Text {
+                          text: {
+                            var count = Model.attachedCount(root.splitNames[index], nym.splitAttached)
+                            if (count <= 0) return "not running"
+                            return count === 1 ? "1 process" : (count + " processes")
+                          }
+                          color: root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Item {
+                          width: Math.max(0, parent.width - parent.children[0].implicitWidth - parent.children[1].implicitWidth - parent.children[3].implicitWidth - parent.spacing * 3)
+                          height: 1
+                        }
+
+                        Button {
+                          text: "Remove"
+                          foreground: root.foreground
+                          fontFamily: root.fontFamily
+                          fontSize: Style.font.caption
+                          bordered: true
+                          anchors.verticalCenter: parent.verticalCenter
+                          onClicked: root.removeSplitName(root.splitNames[index])
+                        }
+                      }
+                    }
+                  }
+
+                  TextField {
+                    id: splitNameField
+                    width: parent.width
+                    placeholderText: "Process name, e.g. agy"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    foreground: root.foreground
+                    hasCursor: root.cursorActive && root.focusSection === "split" && root.splitIndex === root.splitNames.length
+                    onHoveredChanged: if (hovered) {
+                      root.cursorActive = true
+                      root.focusSection = "split"
+                      root.splitIndex = root.splitNames.length
+                    }
+                    onAccepted: root.submitSplitName()
+                    Keys.onEscapePressed: {
+                      splitNameField.text = ""
+                      keyCatcher.forceActiveFocus()
+                    }
+                  }
+
+                  SearchableDropdown {
+                    id: splitPicker
+                    width: parent.width
+                    label: "Running"
+                    placeholderText: "Search running processes"
+                    triggerLabel: "Add a running process"
+                    emptyText: "No matching processes"
+                    fontFamily: root.fontFamily
+                    foreground: root.foreground
+                    hasCursor: root.cursorActive && root.focusSection === "split" && root.splitIndex === root.splitNames.length + 1
+                    options: root.runningProcessOptions
+                    value: ""
+                    onHovered: function(on) {
+                      if (on) {
+                        root.cursorActive = true
+                        root.focusSection = "split"
+                        root.splitIndex = root.splitNames.length + 1
+                      }
+                    }
+                    onChanged: function(value) { root.addSplitName(value) }
                   }
                 }
               }

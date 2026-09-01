@@ -28,7 +28,10 @@ function defaultStatus() {
     exitCountries: [],
     recentEntry: [],
     recentExit: [],
-    lastError: ""
+    lastError: "",
+    splitSupported: true,
+    splitExclude: [],
+    splitAttached: []
   }
 }
 
@@ -83,6 +86,73 @@ function asCountryCodes(value) {
   return rows
 }
 
+var PROCESS_NAME_MAX = 128
+
+function asProcessName(value) {
+  var name = String(value || "").trim().toLowerCase()
+  if (name === "" || name.length > PROCESS_NAME_MAX) return ""
+  if (name.indexOf("/") >= 0 || name.indexOf("\\") >= 0) return ""
+  return name
+}
+
+function asProcessNames(value) {
+  if (!Array.isArray(value)) return []
+  var rows = []
+  var seen = {}
+  for (var i = 0; i < value.length; i++) {
+    var name = asProcessName(value[i])
+    if (name === "" || seen[name]) continue
+    seen[name] = true
+    rows.push(name)
+  }
+  return rows
+}
+
+function asPids(value) {
+  if (!Array.isArray(value)) return []
+  var rows = []
+  var seen = {}
+  for (var i = 0; i < value.length; i++) {
+    var pid = Math.round(Number(value[i]))
+    if (!isFinite(pid) || pid <= 0 || seen[pid]) continue
+    seen[pid] = true
+    rows.push(pid)
+  }
+  return rows
+}
+
+function asAttached(value) {
+  if (!Array.isArray(value)) return []
+  var rows = []
+  for (var i = 0; i < value.length; i++) {
+    var row = value[i]
+    if (!row || typeof row !== "object") continue
+    var name = asProcessName(row.name)
+    var pids = asPids(row.pids)
+    if (name === "" || pids.length === 0) continue
+    rows.push({ name: name, pids: pids })
+  }
+  return rows
+}
+
+function asRunningProcesses(value) {
+  if (!Array.isArray(value)) return []
+  var rows = []
+  var seen = {}
+  for (var i = 0; i < value.length; i++) {
+    var row = value[i] || {}
+    var name = asProcessName(row.name)
+    if (name === "" || seen[name]) continue
+    seen[name] = true
+    rows.push({
+      name: name,
+      pids: asPids(row.pids),
+      exe: asString(row.exe, "")
+    })
+  }
+  return rows
+}
+
 function parseStatus(raw) {
   var text = String(raw || "").trim()
   if (text === "") return defaultStatus()
@@ -119,6 +189,9 @@ function parseStatus(raw) {
     next.recentEntry = asCountryCodes(parsed.recentEntry)
     next.recentExit = asCountryCodes(parsed.recentExit)
     next.lastError = asString(parsed.lastError, "")
+    next.splitSupported = asBool(parsed.splitSupported, next.splitSupported)
+    next.splitExclude = asProcessNames(parsed.splitExclude)
+    next.splitAttached = asAttached(parsed.splitAttached)
     return next
   } catch (e) {
     var failed = defaultStatus()
@@ -222,6 +295,64 @@ function reconcileDesired(desired, running, connecting) {
   return -1
 }
 
+function parseSplitSync(raw) {
+  var failed = { ok: false, supported: false, names: [], attached: [] }
+  var text = String(raw || "").trim()
+  if (text === "") return failed
+  try {
+    var parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== "object") return failed
+    return {
+      ok: parsed.ok !== false,
+      supported: parsed.supported === true,
+      names: asProcessNames(parsed.names),
+      attached: asAttached(parsed.attached)
+    }
+  } catch (e) {
+    return failed
+  }
+}
+
+function parseRunningProcesses(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return []
+  try {
+    var parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== "object") return []
+    return asRunningProcesses(parsed.processes)
+  } catch (e) {
+    return []
+  }
+}
+
+function processOptions(processes, excluded) {
+  var skip = {}
+  var blocked = asProcessNames(excluded)
+  for (var i = 0; i < blocked.length; i++) skip[blocked[i]] = true
+  var rows = asRunningProcesses(processes)
+  var result = []
+  for (var j = 0; j < rows.length; j++) {
+    if (skip[rows[j].name]) continue
+    var count = rows[j].pids.length
+    result.push({
+      value: rows[j].name,
+      label: rows[j].name,
+      description: count === 1 ? "1 process" : (String(count) + " processes")
+    })
+  }
+  result.sort(function(a, b) { return String(a.label).localeCompare(String(b.label)) })
+  return result
+}
+
+function attachedCount(name, attached) {
+  var key = asProcessName(name)
+  var rows = asAttached(attached)
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].name === key) return rows[i].pids.length
+  }
+  return 0
+}
+
 function resetLabel(resetUtc, nowMs) {
   var value = String(resetUtc || "").trim()
   if (value === "") return ""
@@ -252,6 +383,11 @@ if (typeof module !== "undefined") {
     connectBlockReason: connectBlockReason,
     connectBlockMessage: connectBlockMessage,
     reconcileDesired: reconcileDesired,
-    resetLabel: resetLabel
+    resetLabel: resetLabel,
+    asProcessNames: asProcessNames,
+    parseSplitSync: parseSplitSync,
+    parseRunningProcesses: parseRunningProcesses,
+    processOptions: processOptions,
+    attachedCount: attachedCount
   }
 }
