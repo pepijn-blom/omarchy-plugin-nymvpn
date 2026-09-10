@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pepijn-blom.nymvpn",
   "name": "NymVPN",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "Pepijn Blom",
   "license": "MIT",
   "description": "NymVPN status, connect/disconnect, entry and exit country switching, split-tunnel process bypass, and fair-use data usage in the Omarchy bar.",
@@ -19,9 +19,105 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "refreshIntervalSec": 30
+      "refreshIntervalSec": 30,
+      "ipv6": false,
+      "twoHop": true,
+      "adBlock": true,
+      "lanAllow": true,
+      "gatewayIndependence": true,
+      "circumvention": false,
+      "residentialExit": false,
+      "customDns": false,
+      "customDnsServers": "1.1.1.1 1.0.0.1",
+      "defaultEntryCountry": "",
+      "defaultExitCountry": "",
+      "autoConnect": false
     },
     "schema": [
+      {
+        "key": "ipv6",
+        "type": "boolean",
+        "label": "Enable IPv6",
+        "description": "Route IPv6 traffic through the tunnel. Keep disabled if your local network lacks global IPv6 routing.",
+        "defaultValue": false
+      },
+      {
+        "key": "twoHop",
+        "type": "boolean",
+        "label": "Fast mode (2-hop WireGuard)",
+        "description": "Use 2-hop WireGuard tunnel for speed; disable for 5-hop anonymous mixnet.",
+        "defaultValue": true
+      },
+      {
+        "key": "adBlock",
+        "type": "boolean",
+        "label": "Block ads and trackers",
+        "description": "Enable DNS-level ad and malicious domain blocking inside the tunnel.",
+        "defaultValue": true
+      },
+      {
+        "key": "lanAllow",
+        "type": "boolean",
+        "label": "Bypass local network (LAN)",
+        "description": "Allow direct communication with devices on your local network (e.g. printers, NAS).",
+        "defaultValue": true
+      },
+      {
+        "key": "gatewayIndependence",
+        "type": "boolean",
+        "label": "Gateway independence",
+        "description": "Enforce separate node families, ASNs, and subnets for entry and exit nodes.",
+        "defaultValue": true
+      },
+      {
+        "key": "circumvention",
+        "type": "boolean",
+        "label": "Anti-censorship (Circumvention)",
+        "description": "Wrap entry gateway traffic to bypass restrictive firewalls and censorship.",
+        "defaultValue": false
+      },
+      {
+        "key": "residentialExit",
+        "type": "boolean",
+        "label": "Prefer residential exit nodes",
+        "description": "Route exit traffic through residential IP addresses to avoid datacenter blocks.",
+        "defaultValue": false
+      },
+      {
+        "key": "customDns",
+        "type": "boolean",
+        "label": "Use custom DNS",
+        "description": "Use custom DNS resolvers instead of Nym's default resolvers.",
+        "defaultValue": false
+      },
+      {
+        "key": "customDnsServers",
+        "type": "string",
+        "label": "Custom DNS server IPs",
+        "description": "Space-separated DNS IP addresses (e.g. 1.1.1.1 1.0.0.1).",
+        "defaultValue": "1.1.1.1 1.0.0.1"
+      },
+      {
+        "key": "defaultEntryCountry",
+        "type": "string",
+        "label": "Preferred entry country code",
+        "description": "Two-letter ISO country code for tunnel entry (e.g. NL). Leave empty for closest.",
+        "defaultValue": ""
+      },
+      {
+        "key": "defaultExitCountry",
+        "type": "string",
+        "label": "Preferred exit country code",
+        "description": "Two-letter ISO country code for tunnel exit (e.g. DE). Leave empty for automatic.",
+        "defaultValue": ""
+      },
+      {
+        "key": "autoConnect",
+        "type": "boolean",
+        "label": "Auto-connect on desktop login",
+        "description": "Automatically connect the VPN tunnel when the desktop shell starts.",
+        "defaultValue": false
+      },
       {
         "key": "refreshIntervalSec",
         "type": "integer",

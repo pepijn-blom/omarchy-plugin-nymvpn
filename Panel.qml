@@ -67,10 +67,19 @@ Panel {
     { key: "adBlock", label: "Block ads", description: "Block ads and trackers" },
     { key: "ipv6", label: "IPv6", description: "Allow IPv6 connections" },
     { key: "lanAllow", label: "Bypass LAN", description: "Direct access to the local network" },
+    { key: "gatewayIndependence", label: "Gateway independence", description: "Separate node family, ASN, and subnet" },
     { key: "circumvention", label: "Anti-censorship", description: "Wrap the Fast-mode entry hop" },
     { key: "residentialExit", label: "Residential exit", description: "Prefer residential exit nodes" },
     { key: "customDns", label: "Custom DNS", description: "Use your configured DNS servers" }
   ]
+
+  function persistSetting(key, val) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var entry = { id: root.moduleName }
+    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
+    entry[key] = val
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
 
   function persistRecent(kind, code) {
     var name = Model.asCountryCodes([code])[0] || ""
@@ -91,11 +100,13 @@ Panel {
 
   function chooseEntry(code) {
     persistRecent("entry", code)
+    persistSetting("defaultEntryCountry", code)
     nym.setEntryCountry(code)
   }
 
   function chooseExit(code) {
     persistRecent("exit", code)
+    persistSetting("defaultExitCountry", code)
     nym.setExitCountry(code)
   }
 
@@ -103,6 +114,7 @@ Panel {
     if (key === "adBlock") return nym.adBlock
     if (key === "ipv6") return nym.ipv6
     if (key === "lanAllow") return nym.lanAllow
+    if (key === "gatewayIndependence") return nym.gatewayIndependence
     if (key === "circumvention") return nym.circumvention
     if (key === "residentialExit") return nym.residentialExit
     if (key === "customDns") return nym.customDns
@@ -110,12 +122,35 @@ Panel {
   }
 
   function toggleSetting(key) {
-    if (key === "adBlock") nym.setAdBlock(!nym.adBlock)
-    else if (key === "ipv6") nym.setIpv6(!nym.ipv6)
-    else if (key === "lanAllow") nym.setLanAllow(!nym.lanAllow)
-    else if (key === "circumvention") nym.setCircumvention(!nym.circumvention)
-    else if (key === "residentialExit") nym.setResidentialExit(!nym.residentialExit)
-    else if (key === "customDns") nym.setCustomDns(!nym.customDns)
+    if (key === "adBlock") {
+      var nextAd = !nym.adBlock
+      nym.setAdBlock(nextAd)
+      persistSetting("adBlock", nextAd)
+    } else if (key === "ipv6") {
+      var nextIpv6 = !nym.ipv6
+      nym.setIpv6(nextIpv6)
+      persistSetting("ipv6", nextIpv6)
+    } else if (key === "lanAllow") {
+      var nextLan = !nym.lanAllow
+      nym.setLanAllow(nextLan)
+      persistSetting("lanAllow", nextLan)
+    } else if (key === "gatewayIndependence") {
+      var nextIndep = !nym.gatewayIndependence
+      nym.setGatewayIndependence(nextIndep)
+      persistSetting("gatewayIndependence", nextIndep)
+    } else if (key === "circumvention") {
+      var nextCirc = !nym.circumvention
+      nym.setCircumvention(nextCirc)
+      persistSetting("circumvention", nextCirc)
+    } else if (key === "residentialExit") {
+      var nextRes = !nym.residentialExit
+      nym.setResidentialExit(nextRes)
+      persistSetting("residentialExit", nextRes)
+    } else if (key === "customDns") {
+      var nextDns = !nym.customDns
+      nym.setCustomDns(nextDns)
+      persistSetting("customDns", nextDns)
+    }
   }
 
   function persistSplitExclude(names) {
@@ -283,7 +318,11 @@ Panel {
   function activateCursor() {
     ensureCursor()
     if (focusSection === "header") requestToggle()
-    else if (focusSection === "mode") nym.setTwoHop(modeIndex === 0)
+    else if (focusSection === "mode") {
+      var nextMode = modeIndex === 0
+      nym.setTwoHop(nextMode)
+      persistSetting("twoHop", nextMode)
+    }
     else if (focusSection === "entry") entryPicker.open()
     else if (focusSection === "exit") exitPicker.open()
     else if (focusSection === "settings") setSettingsOpen(!settingsOpen)
@@ -350,12 +389,71 @@ Panel {
       return "ok"
     }
     function status(): string { return nym.statusText }
+    function setIpv6(enabled: bool): string {
+      nym.setIpv6(enabled)
+      root.persistSetting("ipv6", enabled)
+      return "ok"
+    }
+    function setTwoHop(enabled: bool): string {
+      nym.setTwoHop(enabled)
+      root.persistSetting("twoHop", enabled)
+      return "ok"
+    }
+    function setAdBlock(enabled: bool): string {
+      nym.setAdBlock(enabled)
+      root.persistSetting("adBlock", enabled)
+      return "ok"
+    }
+    function setLanAllow(enabled: bool): string {
+      nym.setLanAllow(enabled)
+      root.persistSetting("lanAllow", enabled)
+      return "ok"
+    }
+    function setGatewayIndependence(enabled: bool): string {
+      nym.setGatewayIndependence(enabled)
+      root.persistSetting("gatewayIndependence", enabled)
+      return "ok"
+    }
+    function setCircumvention(enabled: bool): string {
+      nym.setCircumvention(enabled)
+      root.persistSetting("circumvention", enabled)
+      return "ok"
+    }
+    function setResidentialExit(enabled: bool): string {
+      nym.setResidentialExit(enabled)
+      root.persistSetting("residentialExit", enabled)
+      return "ok"
+    }
+    function setCustomDns(enabled: bool): string {
+      nym.setCustomDns(enabled)
+      root.persistSetting("customDns", enabled)
+      return "ok"
+    }
+    function setEntryCountry(code: string): string {
+      root.chooseEntry(code)
+      return "ok"
+    }
+    function setExitCountry(code: string): string {
+      root.chooseExit(code)
+      return "ok"
+    }
   }
 
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
+    tooltipText: {
+      if (!nym.installed) return "NymVPN: Not installed"
+      if (!nym.daemon) return "NymVPN: Daemon unavailable"
+      if (nym.active) {
+        var mode = nym.twoHop ? "Fast (2-hop)" : "Mixnet"
+        var route = nym.entryCountry && nym.exitCountry ? (nym.entryCountry + " → " + nym.exitCountry) : (nym.exitCountry || "Connected")
+        return "NymVPN: Connected (" + mode + ", " + route + ")"
+      }
+      if (nym.connecting) return "NymVPN: Connecting…"
+      return "NymVPN: Disconnected (Right-click to connect)"
+    }
     iconComponent: Component {
       Item {
         NymVpnIcon {
@@ -705,6 +803,7 @@ Panel {
               onChanged: function(value) {
                 root.modeIndex = value === "wg" ? 0 : 1
                 nym.setTwoHop(value === "wg")
+                root.persistSetting("twoHop", value === "wg")
               }
             }
           }

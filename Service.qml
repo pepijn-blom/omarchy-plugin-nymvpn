@@ -142,6 +142,60 @@ Item {
       if (blocked !== "") statusText = blocked
       else if (!daemon) statusText = parsed.statusText || "Daemon unavailable"
     }
+    if (installed && daemon) syncConfiguredSettings(parsed)
+  }
+
+  property var _syncedSettings: ({})
+  property bool _autoConnectAttempted: false
+
+  function syncConfiguredSettings(snapshot) {
+    if (!installed || !daemon || !snapshot || actionProcess.running) return
+
+    var items = [
+      { key: "ipv6", current: snapshot.ipv6, fn: setIpv6 },
+      { key: "twoHop", current: snapshot.twoHop, fn: setTwoHop },
+      { key: "adBlock", current: snapshot.adBlock, fn: setAdBlock },
+      { key: "lanAllow", current: snapshot.lanAllow, fn: setLanAllow },
+      { key: "circumvention", current: snapshot.circumvention, fn: setCircumvention },
+      { key: "gatewayIndependence", current: snapshot.gatewayIndependence, fn: setGatewayIndependence },
+      { key: "residentialExit", current: snapshot.residentialExit, fn: setResidentialExit },
+      { key: "customDns", current: snapshot.customDns, fn: setCustomDns }
+    ]
+
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i]
+      var configured = settings ? settings[item.key] : undefined
+      if (configured !== undefined && configured !== null && configured !== item.current && _syncedSettings[item.key] !== configured) {
+        _syncedSettings[item.key] = configured
+        item.fn(configured)
+        return
+      }
+    }
+
+    if (settings && settings.customDnsServers && _syncedSettings.customDnsServers !== settings.customDnsServers) {
+      _syncedSettings.customDnsServers = settings.customDnsServers
+      setCustomDnsServers(settings.customDnsServers)
+      return
+    }
+
+    if (settings && settings.defaultEntryCountry && !snapshot.entryCountry && _syncedSettings.defaultEntryCountry !== settings.defaultEntryCountry) {
+      _syncedSettings.defaultEntryCountry = settings.defaultEntryCountry
+      setEntryCountry(settings.defaultEntryCountry)
+      return
+    }
+
+    if (settings && settings.defaultExitCountry && !snapshot.exitCountry && _syncedSettings.defaultExitCountry !== settings.defaultExitCountry) {
+      _syncedSettings.defaultExitCountry = settings.defaultExitCountry
+      setExitCountry(settings.defaultExitCountry)
+      return
+    }
+
+    if (settings && settings.autoConnect === true && !_autoConnectAttempted) {
+      if (snapshot.accountSet && !snapshot.running && !snapshot.connecting && snapshot.state === "Disconnected") {
+        _autoConnectAttempted = true
+        connectVpn()
+      }
+    }
   }
 
   function applyListen(raw) {
@@ -278,6 +332,23 @@ Item {
     runAction(["nym-vpnc", "gateway", "set", "--residential-exit", residentialExit ? "on" : "off"])
   }
 
+  function setGatewayIndependence(enabled) {
+    if (!installed || actionProcess.running) return
+    gatewayIndependence = enabled === true
+    runAction(["nym-vpnc", "tunnel", "set", "--gateway-independence", gatewayIndependence ? "on" : "off"])
+  }
+
+  function setCustomDnsServers(servers) {
+    if (!installed || actionProcess.running) return
+    var parts = String(servers || "").trim().split(/\s+/)
+    if (parts.length === 0 || parts[0] === "") return
+    var cmd = ["nym-vpnc", "dns", "set"]
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].length > 0) cmd.push(parts[i])
+    }
+    runAction(cmd)
+  }
+
   function setEntryCountry(code) {
     var value = Model.asCountryCodes([code])[0] || ""
     if (!installed || value === "" || actionProcess.running) return
@@ -342,8 +413,14 @@ Item {
     loginProcess.running = true
   }
 
+  property var _actionQueue: []
+
   function runAction(command) {
-    if (actionProcess.running) return
+    if (!command || command.length === 0) return
+    if (actionProcess.running) {
+      _actionQueue.push(command)
+      return
+    }
     _actionOutput = ""
     _actionError = ""
     actionProcess.command = command
@@ -478,11 +555,17 @@ Item {
         }
         root.actionStatus = root.lastError
         actionStatusTimer.restart()
+        root._actionQueue = []
       } else {
         root.lastError = ""
         root.actionStatus = ""
       }
-      delayedRefresh.restart()
+      if (root._actionQueue && root._actionQueue.length > 0) {
+        var nextCmd = root._actionQueue.shift()
+        Qt.callLater(function() { root.runAction(nextCmd) })
+      } else {
+        delayedRefresh.restart()
+      }
     }
   }
 
@@ -575,5 +658,9 @@ Item {
       if (parsed && typeof parsed === "object" && parsed.supported === false) root.splitSupported = false
       else if (parsed && parsed.supported === true) root.splitSupported = true
     }
+  }
+
+  onSettingsChanged: {
+    if (installed && daemon) refresh()
   }
 }
