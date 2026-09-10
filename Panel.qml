@@ -64,13 +64,48 @@ Panel {
   readonly property int splitRowCount: splitNames.length + 2
   readonly property var runningProcessOptions: Model.processOptions(nym.runningProcesses, splitNames)
   readonly property var settingRows: [
-    { key: "adBlock", label: "Block ads", description: "Block ads and trackers" },
-    { key: "ipv6", label: "IPv6", description: "Allow IPv6 connections" },
-    { key: "lanAllow", label: "Bypass LAN", description: "Direct access to the local network" },
-    { key: "gatewayIndependence", label: "Gateway independence", description: "Separate node family, ASN, and subnet" },
-    { key: "circumvention", label: "Anti-censorship", description: "Wrap the Fast-mode entry hop" },
-    { key: "residentialExit", label: "Residential exit", description: "Prefer residential exit nodes" },
-    { key: "customDns", label: "Custom DNS", description: "Use your configured DNS servers" }
+    {
+      key: "adBlock",
+      label: "Block ads",
+      description: "Block ads and trackers",
+      help: "Filters DNS queries inside the tunnel to block advertisements, web tracking scripts, and known malicious phishing domains before they load in your browser or apps."
+    },
+    {
+      key: "ipv6",
+      label: "IPv6",
+      description: "Allow IPv6 connections",
+      help: "Routes IPv6 traffic through the tunnel. Keep disabled if your Wi-Fi or local network lacks global IPv6 routing, which can prevent gateways from connecting."
+    },
+    {
+      key: "lanAllow",
+      label: "Bypass LAN",
+      description: "Direct access to the local network",
+      help: "Allows direct communication with local network devices (printers, file servers, NAS, home automation) without routing local traffic into the VPN tunnel."
+    },
+    {
+      key: "gatewayIndependence",
+      label: "Gateway independence",
+      description: "Separate node family, ASN, and subnet",
+      help: "Enforces that your entry and exit gateways belong to completely different infrastructure providers, ASNs, and network subnets. This prevents any single hosting company or ISP from seeing both your source IP and your destination traffic."
+    },
+    {
+      key: "circumvention",
+      label: "Anti-censorship",
+      description: "Wrap the Fast-mode entry hop",
+      help: "Wraps WireGuard traffic to the entry gateway in obfuscated transport layers to bypass deep packet inspection (DPI), university/office firewalls, and government VPN blocks."
+    },
+    {
+      key: "residentialExit",
+      label: "Residential exit",
+      description: "Prefer residential exit nodes",
+      help: "Prefers exit nodes with IP addresses assigned to residential consumers rather than commercial datacenters. This helps avoid VPN detection and IP bans on streaming platforms, banks, and ticket sites."
+    },
+    {
+      key: "customDns",
+      label: "Custom DNS",
+      description: "Use your configured DNS servers",
+      help: "Directs all domain name resolution to your preferred DNS resolvers (such as Cloudflare 1.1.1.1 or Quad9 9.9.9.9) instead of Nym's default internal resolvers."
+    }
   ]
 
   function persistSetting(key, val) {
@@ -943,10 +978,11 @@ Panel {
                 Repeater {
                   model: root.settingRows.length
 
-                  Toggle {
+                  SettingToggle {
                     width: settingsList.width
                     label: root.settingRows[index].label
                     description: root.settingRows[index].description
+                    help: root.settingRows[index].help || ""
                     checked: root.settingChecked(root.settingRows[index].key)
                     hasCursor: root.cursorActive && root.focusSection === "setting" && root.settingIndex === index
                     foreground: root.foreground
