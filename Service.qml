@@ -25,6 +25,14 @@ Item {
   property bool adBlock: false
   property bool customDns: false
   property bool residentialExit: false
+  property string profile: "fastest"
+  property bool profileSupported: false
+  property bool geoExclusion: false
+  property string geoExclusionCountries: "CN"
+  property bool sentry: true
+  property bool networkStats: true
+  property bool diagnosing: false
+  property string diagnosticSummary: ""
   property string statusText: "Checking…"
   property string state: "Unknown"
   property string entryCountry: ""
@@ -112,6 +120,12 @@ Item {
     adBlock = parsed.adBlock === true
     customDns = parsed.customDns === true
     residentialExit = parsed.residentialExit === true
+    profile = String(parsed.profile || "fastest")
+    profileSupported = parsed.profileSupported === true
+    geoExclusion = parsed.geoExclusion === true
+    geoExclusionCountries = String(parsed.geoExclusionCountries || "CN")
+    sentry = parsed.sentry !== false
+    networkStats = parsed.networkStats !== false
     statusText = String(parsed.statusText || (installed ? "Disconnected" : "Not installed"))
     state = String(parsed.state || "Unknown")
     entryCountry = String(parsed.entryCountry || "")
@@ -336,6 +350,69 @@ Item {
     if (!installed || actionProcess.running) return
     gatewayIndependence = enabled === true
     runAction(["nym-vpnc", "tunnel", "set", "--gateway-independence", gatewayIndependence ? "on" : "off"])
+  }
+
+  function setProfile(name) {
+    if (!installed || actionProcess.running) return
+    var p = String(name || "fastest").toLowerCase()
+    profile = p
+    if (profileSupported) {
+      runAction(["nym-vpnc", "profile", "set", p])
+    } else {
+      // Graceful fallback for v2026.12.2 daemon:
+      if (p === "fastest") {
+        twoHop = true
+        circumvention = false
+        runAction(["nym-vpnc", "tunnel", "set", "--two-hop", "on", "--circumvention-transports", "off"])
+      } else if (p === "safest") {
+        twoHop = true
+        circumvention = true
+        runAction(["nym-vpnc", "tunnel", "set", "--two-hop", "on", "--circumvention-transports", "on"])
+      } else if (p === "most-private") {
+        twoHop = false
+        runAction(["nym-vpnc", "tunnel", "set", "--two-hop", "off"])
+      } else if (p === "random") {
+        twoHop = true
+        runAction(["nym-vpnc", "tunnel", "set", "--two-hop", "on"])
+      }
+    }
+  }
+
+  function setGeoExclusion(enabled) {
+    if (!installed || actionProcess.running) return
+    geoExclusion = enabled === true
+    runAction(["nym-vpnc", "geo-exclusion", "set", "enabled", geoExclusion ? "on" : "off"])
+  }
+
+  function setGeoExclusionCountries(countries) {
+    if (!installed || actionProcess.running) return
+    var raw = String(countries || "").trim()
+    var parts = raw.split(/\s+/)
+    var cmd = ["nym-vpnc", "geo-exclusion", "set", "excluded-countries"]
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].length > 0) cmd.push(parts[i].toUpperCase())
+    }
+    runAction(cmd)
+  }
+
+  function setSentry(enabled) {
+    if (!installed || actionProcess.running) return
+    sentry = enabled === true
+    runAction(["nym-vpnc", "sentry", "set", sentry ? "on" : "off"])
+  }
+
+  function setNetworkStats(enabled) {
+    if (!installed || actionProcess.running) return
+    networkStats = enabled === true
+    runAction(["nym-vpnc", "network-stats", "set", "--enabled", networkStats ? "on" : "off"])
+  }
+
+  function runDiagnostics() {
+    if (!installed || diagnosticProcess.running) return
+    diagnosing = true
+    diagnosticSummary = "Running diagnostics…"
+    actionStatus = "Running diagnostics…"
+    diagnosticProcess.running = true
   }
 
   function setCustomDnsServers(servers) {
@@ -566,6 +643,25 @@ Item {
       } else {
         delayedRefresh.restart()
       }
+    }
+  }
+
+  Process {
+    id: diagnosticProcess
+    running: false
+    command: ["nym-vpnc", "diagnostic", "run"]
+    stdout: StdioCollector { id: diagStdout; waitForEnd: true }
+    stderr: StdioCollector { id: diagStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.diagnosing = false
+      if (exitCode === 0) {
+        root.diagnosticSummary = "Diagnostics passed: Gateway & endpoints reachable"
+      } else {
+        var err = String(diagStderr.text || diagStdout.text || "Diagnostic check failed").trim()
+        root.diagnosticSummary = root.elideStatus(err)
+      }
+      root.actionStatus = root.diagnosticSummary
+      actionStatusTimer.restart()
     }
   }
 

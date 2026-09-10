@@ -431,6 +431,69 @@ def parse_dns_get(raw: str) -> dict[str, Any]:
     return {"customDns": enabled}
 
 
+def parse_geo_exclusion_get(raw: str) -> dict[str, Any]:
+    enabled = False
+    countries = ""
+    for line in str(raw or "").splitlines():
+        lower = line.lower()
+        if "geo exclusion enabled:" in lower:
+            enabled = _is_on(line.split(":", 1)[-1])
+        elif "excluded countries:" in lower:
+            val = line.split(":", 1)[-1].strip()
+            if val and val != "(none)":
+                countries = val.replace(",", " ")
+    return {"geoExclusion": enabled, "geoExclusionCountries": countries}
+
+
+def parse_sentry_get(raw: str) -> dict[str, Any]:
+    enabled = True
+    for line in str(raw or "").splitlines():
+        if "sentry integration:" in line.lower():
+            enabled = _is_on(line.split(":", 1)[-1])
+            break
+    return {"sentry": enabled}
+
+
+def parse_network_stats_get(raw: str) -> dict[str, Any]:
+    enabled = True
+    for line in str(raw or "").splitlines():
+        if "anonymous network statistics collection:" in line.lower():
+            enabled = _is_on(line.split(":", 1)[-1])
+            break
+    return {"networkStats": enabled}
+
+
+def derive_profile(
+    two_hop: bool,
+    circumvention: bool,
+    entry_point: str = "",
+    exit_point: str = "",
+) -> str:
+    if not two_hop:
+        return "most-private"
+    entry_lower = str(entry_point or "").lower()
+    exit_lower = str(exit_point or "").lower()
+    if "random" in entry_lower or "random" in exit_lower:
+        return "random"
+    if circumvention:
+        return "safest"
+    return "fastest"
+
+
+_PROFILE_SUPPORTED: bool | None = None
+
+
+def is_profile_supported() -> bool:
+    global _PROFILE_SUPPORTED
+    if _PROFILE_SUPPORTED is not None:
+        return _PROFILE_SUPPORTED
+    code, _, _ = run_vpnc(["profile", "--help"], timeout=5)
+    _PROFILE_SUPPORTED = (code == 0)
+    return _PROFILE_SUPPORTED
+
+
+
+
 def _is_on(value: str) -> bool:
     token = str(value or "").strip().split()[0].lower() if str(value or "").strip() else ""
     return token in {"on", "true", "1", "yes", "allow", "enabled"}
@@ -556,6 +619,12 @@ def default_snapshot() -> dict[str, Any]:
         "exitCountries": [],
         "recentEntry": [],
         "recentExit": [],
+        "profile": "fastest",
+        "profileSupported": False,
+        "geoExclusion": False,
+        "geoExclusionCountries": "",
+        "sentry": True,
+        "networkStats": True,
         "lastError": "",
     }
 
@@ -572,6 +641,9 @@ def merge_snapshot(
     dns: dict[str, Any] | None = None,
     account: dict[str, Any] | None = None,
     summary: dict[str, Any] | None = None,
+    geo_exclusion: dict[str, Any] | None = None,
+    sentry: dict[str, Any] | None = None,
+    network_stats: dict[str, Any] | None = None,
     entry_countries: list[dict[str, Any]] | None = None,
     exit_countries: list[dict[str, Any]] | None = None,
     recent_entry: list[str] | None = None,
@@ -630,6 +702,22 @@ def merge_snapshot(
     snap["exitCountries"] = exit_countries or []
     snap["recentEntry"] = recent_entry or []
     snap["recentExit"] = recent_exit or []
+
+    geo_exclusion = geo_exclusion or {}
+    sentry = sentry or {}
+    network_stats = network_stats or {}
+    snap["geoExclusion"] = bool(geo_exclusion.get("geoExclusion"))
+    snap["geoExclusionCountries"] = str(geo_exclusion.get("geoExclusionCountries") or "")
+    snap["sentry"] = bool(sentry.get("sentry", True))
+    snap["networkStats"] = bool(network_stats.get("networkStats", True))
+    snap["profile"] = derive_profile(
+        snap["twoHop"],
+        snap["circumvention"],
+        snap["entryCountry"],
+        snap["exitCountry"],
+    )
+    snap["profileSupported"] = bool(is_profile_supported())
+
     snap["lastError"] = redact(last_error) or str(status.get("lastError") or "")
     if last_error:
         snap["ok"] = False
@@ -731,7 +819,7 @@ def collect_snapshot(*, refresh_lists: bool = False) -> dict[str, Any]:
         )
 
     daemon = True
-    with ThreadPoolExecutor(max_workers=7) as pool:
+    with ThreadPoolExecutor(max_workers=10) as pool:
         gateway_future = pool.submit(run_vpnc, ["gateway", "get"])
         tunnel_future = pool.submit(run_vpnc, ["tunnel", "get"])
         lan_future = pool.submit(run_vpnc, ["lan", "get"])
@@ -739,6 +827,9 @@ def collect_snapshot(*, refresh_lists: bool = False) -> dict[str, Any]:
         dns_future = pool.submit(run_vpnc, ["dns", "get"])
         account_future = pool.submit(run_vpnc, ["account", "get"])
         summary_future = pool.submit(run_vpnc, ["account", "summary"])
+        geo_future = pool.submit(run_vpnc, ["geo-exclusion", "get"])
+        sentry_future = pool.submit(run_vpnc, ["sentry", "get"])
+        stats_future = pool.submit(run_vpnc, ["network-stats", "get"])
         gateway_code, gateway_out, gateway_err = gateway_future.result()
         tunnel_code, tunnel_out, tunnel_err = tunnel_future.result()
         lan_code, lan_out, lan_err = lan_future.result()
@@ -746,6 +837,9 @@ def collect_snapshot(*, refresh_lists: bool = False) -> dict[str, Any]:
         dns_code, dns_out, dns_err = dns_future.result()
         account_code, account_out, account_err = account_future.result()
         summary_code, summary_out, summary_err = summary_future.result()
+        geo_code, geo_out, geo_err = geo_future.result()
+        sentry_code, sentry_out, sentry_err = sentry_future.result()
+        stats_code, stats_out, stats_err = stats_future.result()
 
     summary = parse_account_summary(_combined(summary_out, summary_err))
     if not summary.get("quotaKnown"):
@@ -771,6 +865,9 @@ def collect_snapshot(*, refresh_lists: bool = False) -> dict[str, Any]:
         (dns_code, dns_err, dns_out, "dns"),
         (account_code, account_err, account_out, "account"),
         (summary_code, summary_err, summary_out, "summary"),
+        (geo_code, geo_err, geo_out, "geo-exclusion"),
+        (sentry_code, sentry_err, sentry_out, "sentry"),
+        (stats_code, stats_err, stats_out, "network-stats"),
     ):
         if code not in (0, 127) and not out.strip():
             message = redact((err or out).strip())
@@ -788,6 +885,9 @@ def collect_snapshot(*, refresh_lists: bool = False) -> dict[str, Any]:
         dns=parse_dns_get(_combined(dns_out, dns_err)),
         account=parse_account_get(account_out or account_err),
         summary=summary,
+        geo_exclusion=parse_geo_exclusion_get(_combined(geo_out, geo_err)),
+        sentry=parse_sentry_get(_combined(sentry_out, sentry_err)),
+        network_stats=parse_network_stats_get(_combined(stats_out, stats_err)),
         entry_countries=entry_countries,
         exit_countries=exit_countries,
         last_error="; ".join(errors),

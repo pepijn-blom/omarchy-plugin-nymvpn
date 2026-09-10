@@ -29,6 +29,12 @@ function defaultStatus() {
     recentEntry: [],
     recentExit: [],
     lastError: "",
+    profile: "fastest",
+    profileSupported: false,
+    geoExclusion: false,
+    geoExclusionCountries: "",
+    sentry: true,
+    networkStats: true,
     splitSupported: true,
     splitExclude: [],
     splitAttached: []
@@ -189,6 +195,12 @@ function parseStatus(raw) {
     next.recentEntry = asCountryCodes(parsed.recentEntry)
     next.recentExit = asCountryCodes(parsed.recentExit)
     next.lastError = asString(parsed.lastError, "")
+    next.profile = asString(parsed.profile, next.profile)
+    next.profileSupported = asBool(parsed.profileSupported, false)
+    next.geoExclusion = asBool(parsed.geoExclusion, next.geoExclusion)
+    next.geoExclusionCountries = asString(parsed.geoExclusionCountries, next.geoExclusionCountries)
+    next.sentry = asBool(parsed.sentry, next.sentry)
+    next.networkStats = asBool(parsed.networkStats, next.networkStats)
     next.splitSupported = asBool(parsed.splitSupported, next.splitSupported)
     next.splitExclude = asProcessNames(parsed.splitExclude)
     next.splitAttached = asAttached(parsed.splitAttached)

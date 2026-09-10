@@ -105,6 +105,24 @@ Panel {
       label: "Custom DNS",
       description: "Use your configured DNS servers",
       help: "Directs all domain name resolution to your preferred DNS resolvers (such as Cloudflare 1.1.1.1 or Quad9 9.9.9.9) instead of Nym's default internal resolvers."
+    },
+    {
+      key: "geoExclusion",
+      label: "Geo-exclusion",
+      description: "Bypass tunnel for specific countries",
+      help: "Directs connections destined for designated countries (e.g. CN, RU) outside the VPN tunnel through a local transparent proxy, ensuring domestic services, local banking, or regional media remain functional."
+    },
+    {
+      key: "sentry",
+      label: "Crash reporting",
+      description: "Send crash logs to Nym",
+      help: "Sends crash logs and stack traces to Nym's development team to help detect and resolve issues. Disable for complete telemetric silence."
+    },
+    {
+      key: "networkStats",
+      label: "Anonymous metrics",
+      description: "Share anonymous network health stats",
+      help: "Shares anonymous packet and routing statistics to help maintain and balance the decentralized Nym network. No user identity or destination traffic is collected."
     }
   ]
 
@@ -153,6 +171,9 @@ Panel {
     if (key === "circumvention") return nym.circumvention
     if (key === "residentialExit") return nym.residentialExit
     if (key === "customDns") return nym.customDns
+    if (key === "geoExclusion") return nym.geoExclusion
+    if (key === "sentry") return nym.sentry
+    if (key === "networkStats") return nym.networkStats
     return false
   }
 
@@ -185,6 +206,18 @@ Panel {
       var nextDns = !nym.customDns
       nym.setCustomDns(nextDns)
       persistSetting("customDns", nextDns)
+    } else if (key === "geoExclusion") {
+      var nextGeo = !nym.geoExclusion
+      nym.setGeoExclusion(nextGeo)
+      persistSetting("geoExclusion", nextGeo)
+    } else if (key === "sentry") {
+      var nextSentry = !nym.sentry
+      nym.setSentry(nextSentry)
+      persistSetting("sentry", nextSentry)
+    } else if (key === "networkStats") {
+      var nextStats = !nym.networkStats
+      nym.setNetworkStats(nextStats)
+      persistSetting("networkStats", nextStats)
     }
   }
 
@@ -464,6 +497,30 @@ Panel {
       root.persistSetting("customDns", enabled)
       return "ok"
     }
+    function setProfile(name: string): string {
+      nym.setProfile(name)
+      root.persistSetting("profile", name)
+      return "ok"
+    }
+    function setGeoExclusion(enabled: bool): string {
+      nym.setGeoExclusion(enabled)
+      root.persistSetting("geoExclusion", enabled)
+      return "ok"
+    }
+    function setSentry(enabled: bool): string {
+      nym.setSentry(enabled)
+      root.persistSetting("sentry", enabled)
+      return "ok"
+    }
+    function setNetworkStats(enabled: bool): string {
+      nym.setNetworkStats(enabled)
+      root.persistSetting("networkStats", enabled)
+      return "ok"
+    }
+    function runDiagnostics(): string {
+      nym.runDiagnostics()
+      return "ok"
+    }
     function setEntryCountry(code: string): string {
       root.chooseEntry(code)
       return "ok"
@@ -637,6 +694,17 @@ Panel {
               bordered: true
               onClicked: nym.refresh(true)
             }
+
+            Button {
+              text: nym.diagnosing ? "Testing…" : "Diagnostics"
+              iconText: "󰞏"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              bordered: true
+              enabled: !nym.diagnosing
+              onClicked: nym.runDiagnostics()
+            }
           }
 
           CursorSurface {
@@ -803,6 +871,42 @@ Panel {
             connecting: nym.connecting
             mixnet: !nym.twoHop
             playing: root.opened
+          }
+
+          Column {
+            visible: nym.installed
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "PROFILE"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            ButtonGroup {
+              id: profileGroup
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              focusable: false
+              value: nym.profile
+              options: [
+                { value: "fastest", label: "Fastest", tooltip: "Closest servers, best for streaming & speed" },
+                { value: "safest", label: "Safest", tooltip: "2-hop cross-jurisdiction routing with anti-censorship" },
+                { value: "most-private", label: "Private", tooltip: "5-hop mixnet routing with timing obfuscation" },
+                { value: "random", label: "Random", tooltip: "Randomized server selection" }
+              ]
+              onChanged: function(value) {
+                nym.setProfile(value)
+                root.persistSetting("profile", value)
+              }
+            }
+          }
+
+          PanelSeparator {
+            visible: nym.installed
+            foreground: root.foreground
           }
 
           Column {

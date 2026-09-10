@@ -31,7 +31,12 @@
       "customDnsServers": "1.1.1.1 1.0.0.1",
       "defaultEntryCountry": "",
       "defaultExitCountry": "",
-      "autoConnect": false
+      "autoConnect": false,
+      "profile": "fastest",
+      "geoExclusion": false,
+      "geoExclusionCountries": "CN",
+      "sentry": true,
+      "networkStats": true
     },
     "schema": [
       {
@@ -117,6 +122,41 @@
         "label": "Auto-connect on desktop login",
         "description": "Automatically connect the VPN tunnel when the desktop shell starts.",
         "defaultValue": false
+      },
+      {
+        "key": "profile",
+        "type": "string",
+        "label": "Connection profile",
+        "description": "Connection template balancing privacy and speed (fastest, safest, most-private, random).",
+        "defaultValue": "fastest"
+      },
+      {
+        "key": "geoExclusion",
+        "type": "boolean",
+        "label": "Geo-exclusion proxy bypass",
+        "description": "Bypass the VPN tunnel for traffic destined for specific countries using a local transparent proxy.",
+        "defaultValue": false
+      },
+      {
+        "key": "geoExclusionCountries",
+        "type": "string",
+        "label": "Geo-exclusion countries",
+        "description": "Space-separated ISO country codes to bypass (e.g. CN RU).",
+        "defaultValue": "CN"
+      },
+      {
+        "key": "sentry",
+        "type": "boolean",
+        "label": "Crash reporting (Sentry)",
+        "description": "Send crash reports to Nym to help fix bugs. Disable for complete telemetric silence.",
+        "defaultValue": true
+      },
+      {
+        "key": "networkStats",
+        "type": "boolean",
+        "label": "Anonymous network stats",
+        "description": "Share anonymous network health and routing statistics to help maintain the decentralized Nym network.",
+        "defaultValue": true
       },
       {
         "key": "refreshIntervalSec",

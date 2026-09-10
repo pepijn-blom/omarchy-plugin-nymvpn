@@ -25,6 +25,12 @@ function testParseStatusJson() {
     customDns: true,
     entryCountry: "US",
     exitCountry: "JP",
+    profile: "safest",
+    profileSupported: true,
+    geoExclusion: true,
+    geoExclusionCountries: "CN RU",
+    sentry: false,
+    networkStats: false,
     usedGb: 12,
     limitGb: 50,
     quotaKnown: true,
@@ -42,6 +48,12 @@ function testParseStatusJson() {
   assert.strictEqual(parsed.adBlock, true)
   assert.strictEqual(parsed.lanAllow, false)
   assert.strictEqual(parsed.customDns, true)
+  assert.strictEqual(parsed.profile, "safest")
+  assert.strictEqual(parsed.profileSupported, true)
+  assert.strictEqual(parsed.geoExclusion, true)
+  assert.strictEqual(parsed.geoExclusionCountries, "CN RU")
+  assert.strictEqual(parsed.sentry, false)
+  assert.strictEqual(parsed.networkStats, false)
   assert.strictEqual(parsed.entryCountry, "US")
   assert.strictEqual(parsed.usedGb, 12)
   assert.strictEqual(parsed.entryCountries.length, 1)

@@ -353,5 +353,32 @@ class MainTests(unittest.TestCase):
         self.assertIn("Usage:", stdout.getvalue())
 
 
+class ParseNewFeaturesTests(unittest.TestCase):
+    def test_geo_exclusion(self):
+        raw = "Geo Exclusion enabled:    yes\nListen port:      1081\nExcluded countries: CN, RU\n"
+        parsed = nymstatus.parse_geo_exclusion_get(raw)
+        self.assertTrue(parsed["geoExclusion"])
+        self.assertEqual(parsed["geoExclusionCountries"], "CN  RU")
+
+        raw_off = "Geo Exclusion enabled:    no\nListen port:      1081\nExcluded countries: (none)\n"
+        parsed_off = nymstatus.parse_geo_exclusion_get(raw_off)
+        self.assertFalse(parsed_off["geoExclusion"])
+        self.assertEqual(parsed_off["geoExclusionCountries"], "")
+
+    def test_sentry(self):
+        self.assertTrue(nymstatus.parse_sentry_get("Sentry integration: on\n")["sentry"])
+        self.assertFalse(nymstatus.parse_sentry_get("Sentry integration: off\n")["sentry"])
+
+    def test_network_stats(self):
+        self.assertTrue(nymstatus.parse_network_stats_get("Anonymous network statistics collection: on\n")["networkStats"])
+        self.assertFalse(nymstatus.parse_network_stats_get("Anonymous network statistics collection: off\n")["networkStats"])
+
+    def test_derive_profile(self):
+        self.assertEqual(nymstatus.derive_profile(two_hop=False, circumvention=False), "most-private")
+        self.assertEqual(nymstatus.derive_profile(two_hop=True, circumvention=True), "safest")
+        self.assertEqual(nymstatus.derive_profile(two_hop=True, circumvention=False), "fastest")
+        self.assertEqual(nymstatus.derive_profile(two_hop=True, circumvention=False, entry_point="Random"), "random")
+
+
 if __name__ == "__main__":
     unittest.main()
