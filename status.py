@@ -441,7 +441,7 @@ def parse_geo_exclusion_get(raw: str) -> dict[str, Any]:
         elif "excluded countries:" in lower:
             val = line.split(":", 1)[-1].strip()
             if val and val != "(none)":
-                countries = val.replace(",", " ")
+                countries = " ".join(val.replace(",", " ").split())
     return {"geoExclusion": enabled, "geoExclusionCountries": countries}
 
 

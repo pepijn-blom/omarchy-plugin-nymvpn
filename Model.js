@@ -365,6 +365,15 @@ function attachedCount(name, attached) {
   return 0
 }
 
+function runningCount(name, runningProcesses) {
+  var key = asProcessName(name)
+  var rows = asRunningProcesses(runningProcesses)
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].name === key) return rows[i].pids.length
+  }
+  return 0
+}
+
 function resetLabel(resetUtc, nowMs) {
   var value = String(resetUtc || "").trim()
   if (value === "") return ""
@@ -400,6 +409,7 @@ if (typeof module !== "undefined") {
     parseSplitSync: parseSplitSync,
     parseRunningProcesses: parseRunningProcesses,
     processOptions: processOptions,
-    attachedCount: attachedCount
+    attachedCount: attachedCount,
+    runningCount: runningCount
   }
 }

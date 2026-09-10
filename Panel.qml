@@ -17,6 +17,7 @@ Panel {
   property int modeIndex: 0
   property int settingIndex: 0
   property int splitIndex: 0
+  property int _activeEditorCount: 0
   property bool cursorActive: false
   property bool pendingLoginFocus: false
   property int phraseIndex: 0
@@ -221,6 +222,33 @@ Panel {
     }
   }
 
+  function applyGeoCountries(codes) {
+    var raw = String(codes || "").trim().toUpperCase()
+    var parts = raw.split(/[\s,]+/).filter(function(s) { return s.length > 0 })
+    var joined = parts.join(" ")
+    persistSetting("geoExclusionCountries", joined)
+    nym.setGeoExclusionCountries(joined)
+  }
+
+  function appendGeoCountry(code) {
+    var raw = String(nym.geoExclusionCountries || "").trim().toUpperCase()
+    var parts = raw.split(/[\s,]+/).filter(function(s) { return s.length > 0 })
+    if (parts.indexOf(code) < 0) {
+      parts.push(code)
+    }
+    var joined = parts.join(" ")
+    persistSetting("geoExclusionCountries", joined)
+    nym.setGeoExclusionCountries(joined)
+  }
+
+  function applyDnsServers(servers) {
+    var raw = String(servers || "").trim()
+    var parts = raw.split(/[\s,]+/).filter(function(s) { return s.length > 0 })
+    var joined = parts.join(" ")
+    persistSetting("customDnsServers", joined)
+    nym.setCustomDnsServers(joined)
+  }
+
   function persistSplitExclude(names) {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
     var entry = { id: root.moduleName }
@@ -416,6 +444,7 @@ Panel {
       if (!pendingLoginFocus) cursorActive = false
       nym.refresh(true)
       nym.listRunning()
+      if (root.splitNames.length > 0) nym.syncSplit()
       if (pendingLoginFocus) {
         pendingLoginFocus = false
         Qt.callLater(function() { root.focusLogin() })
@@ -581,7 +610,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.pickerOpen || phraseField.activeFocus || splitNameField.activeFocus
+      blocked: root.pickerOpen || phraseField.activeFocus || splitNameField.activeFocus || root._activeEditorCount > 0
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
@@ -1082,22 +1111,243 @@ Panel {
                 Repeater {
                   model: root.settingRows.length
 
-                  SettingToggle {
+                  Column {
                     width: settingsList.width
-                    label: root.settingRows[index].label
-                    description: root.settingRows[index].description
-                    help: root.settingRows[index].help || ""
-                    checked: root.settingChecked(root.settingRows[index].key)
-                    hasCursor: root.cursorActive && root.focusSection === "setting" && root.settingIndex === index
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                    onHovered: function(on) {
-                      if (!on) return
-                      root.cursorActive = true
-                      root.focusSection = "setting"
-                      root.settingIndex = index
+                    spacing: Style.space(4)
+
+                    SettingToggle {
+                      width: parent.width
+                      label: root.settingRows[index].label
+                      description: {
+                        var rowKey = root.settingRows[index].key
+                        if (rowKey === "geoExclusion" && nym.geoExclusion && nym.geoExclusionCountries) {
+                          return "Excluded: " + nym.geoExclusionCountries
+                        }
+                        if (rowKey === "customDns" && nym.customDns && root.settings && root.settings.customDnsServers) {
+                          return "Servers: " + root.settings.customDnsServers
+                        }
+                        return root.settingRows[index].description
+                      }
+                      help: root.settingRows[index].help || ""
+                      checked: root.settingChecked(root.settingRows[index].key)
+                      hasCursor: root.cursorActive && root.focusSection === "setting" && root.settingIndex === index
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      onHovered: function(on) {
+                        if (!on) return
+                        root.cursorActive = true
+                        root.focusSection = "setting"
+                        root.settingIndex = index
+                      }
+                      onClicked: root.toggleSetting(root.settingRows[index].key)
                     }
-                    onClicked: root.toggleSetting(root.settingRows[index].key)
+
+                    Rectangle {
+                      visible: root.settingRows[index].key === "customDns" && root.settingChecked("customDns")
+                      width: parent.width
+                      implicitHeight: visible ? (dnsCol.implicitHeight + Style.space(16)) : 0
+                      radius: Style.cornerRadius
+                      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.05)
+                      border.width: 1
+                      border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
+
+                      Column {
+                        id: dnsCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Style.space(8)
+                        spacing: Style.space(6)
+
+                        Text {
+                          text: "DNS RESOLVERS"
+                          color: Qt.darker(root.foreground, 1.4)
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+
+                        TextField {
+                          id: customDnsField
+                          width: parent.width
+                          placeholderText: "e.g. 1.1.1.1 1.0.0.1"
+                          text: (root.settings && root.settings.customDnsServers) ? root.settings.customDnsServers : "1.1.1.1 1.0.0.1"
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.bodySmall
+                          foreground: root.foreground
+                          onActiveFocusChanged: {
+                            if (activeFocus) root._activeEditorCount += 1
+                            else root._activeEditorCount = Math.max(0, root._activeEditorCount - 1)
+                          }
+                          onAccepted: {
+                            root.applyDnsServers(text)
+                            keyCatcher.forceActiveFocus()
+                          }
+                        }
+
+                        Connections {
+                          target: nym
+                          function onCustomDnsChanged() {
+                            if (!customDnsField.activeFocus && root.settings && root.settings.customDnsServers) {
+                              customDnsField.text = root.settings.customDnsServers
+                            }
+                          }
+                        }
+
+                        Row {
+                          spacing: Style.space(6)
+
+                          Button {
+                            text: "Cloudflare"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              customDnsField.text = "1.1.1.1 1.0.0.1"
+                              root.applyDnsServers("1.1.1.1 1.0.0.1")
+                            }
+                          }
+
+                          Button {
+                            text: "Quad9"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              customDnsField.text = "9.9.9.9 149.112.112.112"
+                              root.applyDnsServers("9.9.9.9 149.112.112.112")
+                            }
+                          }
+
+                          Button {
+                            text: "Apply"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              root.applyDnsServers(customDnsField.text)
+                              keyCatcher.forceActiveFocus()
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    Rectangle {
+                      visible: root.settingRows[index].key === "geoExclusion" && root.settingChecked("geoExclusion")
+                      width: parent.width
+                      implicitHeight: visible ? (geoCol.implicitHeight + Style.space(16)) : 0
+                      radius: Style.cornerRadius
+                      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.05)
+                      border.width: 1
+                      border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
+
+                      Column {
+                        id: geoCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Style.space(8)
+                        spacing: Style.space(6)
+
+                        Text {
+                          text: "EXCLUDED COUNTRY CODES"
+                          color: Qt.darker(root.foreground, 1.4)
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+
+                        Text {
+                          width: parent.width
+                          text: "Direct connections outside tunnel (ISO-3166-1 alpha-2):"
+                          color: root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          wrapMode: Text.WordWrap
+                        }
+
+                        TextField {
+                          id: geoCountriesField
+                          width: parent.width
+                          placeholderText: "e.g. CN RU"
+                          text: nym.geoExclusionCountries || ""
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.bodySmall
+                          foreground: root.foreground
+                          onActiveFocusChanged: {
+                            if (activeFocus) root._activeEditorCount += 1
+                            else root._activeEditorCount = Math.max(0, root._activeEditorCount - 1)
+                          }
+                          onAccepted: {
+                            root.applyGeoCountries(text)
+                            keyCatcher.forceActiveFocus()
+                          }
+                        }
+
+                        Connections {
+                          target: nym
+                          function onGeoExclusionCountriesChanged() {
+                            if (!geoCountriesField.activeFocus) geoCountriesField.text = nym.geoExclusionCountries
+                          }
+                        }
+
+                        Row {
+                          spacing: Style.space(6)
+
+                          Button {
+                            text: "+ CN"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              root.appendGeoCountry("CN")
+                              geoCountriesField.text = nym.geoExclusionCountries
+                            }
+                          }
+
+                          Button {
+                            text: "+ RU"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              root.appendGeoCountry("RU")
+                              geoCountriesField.text = nym.geoExclusionCountries
+                            }
+                          }
+
+                          Button {
+                            text: "Clear"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.dim
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              geoCountriesField.text = ""
+                              root.applyGeoCountries("")
+                            }
+                          }
+
+                          Button {
+                            text: "Apply"
+                            fontSize: Style.font.caption
+                            bordered: true
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: {
+                              root.applyGeoCountries(geoCountriesField.text)
+                              keyCatcher.forceActiveFocus()
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
 
@@ -1159,11 +1409,22 @@ Panel {
 
                         Text {
                           text: {
-                            var count = Model.attachedCount(root.splitNames[index], nym.splitAttached)
-                            if (count <= 0) return "not running"
-                            return count === 1 ? "1 process" : (count + " processes")
+                            var attached = Model.attachedCount(root.splitNames[index], nym.splitAttached)
+                            if (attached > 0) {
+                              var base = attached === 1 ? "1 process" : (attached + " processes")
+                              return nym.running ? (base + " (bypassed)") : base
+                            }
+                            if (nym.splitSyncing) return "syncing…"
+                            var running = Model.runningCount(root.splitNames[index], nym.runningProcesses)
+                            if (running > 0) return running === 1 ? "1 process (attaching…)" : (running + " processes (attaching…)")
+                            return "not running"
                           }
-                          color: root.dim
+                          color: {
+                            var attached = Model.attachedCount(root.splitNames[index], nym.splitAttached)
+                            if (attached > 0) return root.foreground
+                            if (nym.splitSyncing || Model.runningCount(root.splitNames[index], nym.runningProcesses) > 0) return root.foreground
+                            return root.dim
+                          }
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
                           anchors.verticalCenter: parent.verticalCenter

@@ -358,7 +358,7 @@ class ParseNewFeaturesTests(unittest.TestCase):
         raw = "Geo Exclusion enabled:    yes\nListen port:      1081\nExcluded countries: CN, RU\n"
         parsed = nymstatus.parse_geo_exclusion_get(raw)
         self.assertTrue(parsed["geoExclusion"])
-        self.assertEqual(parsed["geoExclusionCountries"], "CN  RU")
+        self.assertEqual(parsed["geoExclusionCountries"], "CN RU")
 
         raw_off = "Geo Exclusion enabled:    no\nListen port:      1081\nExcluded countries: (none)\n"
         parsed_off = nymstatus.parse_geo_exclusion_get(raw_off)

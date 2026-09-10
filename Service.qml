@@ -51,6 +51,8 @@ Item {
   property bool splitSupported: true
   property var splitAttached: []
   property var runningProcesses: []
+  property var _splitPending: null
+  readonly property bool splitSyncing: splitSyncProcess.running
 
   property bool loggingIn: false
 
@@ -173,7 +175,10 @@ Item {
       { key: "circumvention", current: snapshot.circumvention, fn: setCircumvention },
       { key: "gatewayIndependence", current: snapshot.gatewayIndependence, fn: setGatewayIndependence },
       { key: "residentialExit", current: snapshot.residentialExit, fn: setResidentialExit },
-      { key: "customDns", current: snapshot.customDns, fn: setCustomDns }
+      { key: "customDns", current: snapshot.customDns, fn: setCustomDns },
+      { key: "geoExclusion", current: snapshot.geoExclusion, fn: setGeoExclusion },
+      { key: "sentry", current: snapshot.sentry, fn: setSentry },
+      { key: "networkStats", current: snapshot.networkStats, fn: setNetworkStats }
     ]
 
     for (var i = 0; i < items.length; i++) {
@@ -189,6 +194,12 @@ Item {
     if (settings && settings.customDnsServers && _syncedSettings.customDnsServers !== settings.customDnsServers) {
       _syncedSettings.customDnsServers = settings.customDnsServers
       setCustomDnsServers(settings.customDnsServers)
+      return
+    }
+
+    if (settings && settings.geoExclusionCountries && _syncedSettings.geoExclusionCountries !== settings.geoExclusionCountries) {
+      _syncedSettings.geoExclusionCountries = settings.geoExclusionCountries
+      setGeoExclusionCountries(settings.geoExclusionCountries)
       return
     }
 
@@ -387,11 +398,17 @@ Item {
   function setGeoExclusionCountries(countries) {
     if (!installed || actionProcess.running) return
     var raw = String(countries || "").trim()
-    var parts = raw.split(/\s+/)
+    var parts = raw.split(/[\s,]+/)
     var cmd = ["nym-vpnc", "geo-exclusion", "set", "excluded-countries"]
+    var cleaned = []
     for (var i = 0; i < parts.length; i++) {
-      if (parts[i].length > 0) cmd.push(parts[i].toUpperCase())
+      if (parts[i].length > 0) {
+        var code = parts[i].toUpperCase()
+        cmd.push(code)
+        cleaned.push(code)
+      }
     }
+    geoExclusionCountries = cleaned.join(" ")
     runAction(cmd)
   }
 
@@ -417,7 +434,8 @@ Item {
 
   function setCustomDnsServers(servers) {
     if (!installed || actionProcess.running) return
-    var parts = String(servers || "").trim().split(/\s+/)
+    var raw = String(servers || "").trim()
+    var parts = raw.split(/[\s,]+/)
     if (parts.length === 0 || parts[0] === "") return
     var cmd = ["nym-vpnc", "dns", "set"]
     for (var i = 0; i < parts.length; i++) {
@@ -434,8 +452,13 @@ Item {
   }
 
   function syncSplit(names) {
-    if (!installed || splitSyncProcess.running || splitPath === "") return
+    if (!installed || splitPath === "") return
     var list = names !== undefined ? Model.asProcessNames(names) : splitExclude
+    if (splitSyncProcess.running) {
+      _splitPending = list
+      return
+    }
+    _splitPending = null
     var command = ["python3", splitPath, "sync"]
     for (var i = 0; i < list.length; i++) {
       command.push("--exclude")
@@ -709,7 +732,7 @@ Item {
     id: splitSyncTimer
     interval: 2000
     repeat: true
-    running: root.running && root.splitExclude.length > 0 && root.installed
+    running: root.splitExclude.length > 0 && root.installed && root.daemon
     onTriggered: root.syncSplit()
   }
 
@@ -724,6 +747,11 @@ Item {
       if (parsed.supported === true || parsed.supported === false) root.splitSupported = parsed.supported
       if (parsed.ok) root.splitAttached = parsed.attached
       else if (!parsed.supported) root.splitAttached = []
+      if (root._splitPending !== null) {
+        var nextPending = root._splitPending
+        root._splitPending = null
+        Qt.callLater(function() { root.syncSplit(nextPending) })
+      }
     }
   }
 

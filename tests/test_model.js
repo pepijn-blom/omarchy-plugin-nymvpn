@@ -224,6 +224,13 @@ function testAttachedCount() {
   assert.strictEqual(Model.attachedCount("firefox", attached), 0)
 }
 
+function testRunningCount() {
+  const procs = [{ name: "netbird", pids: [1421] }, { name: "agy", pids: [200, 201] }]
+  assert.strictEqual(Model.runningCount("netbird", procs), 1)
+  assert.strictEqual(Model.runningCount("agy", procs), 2)
+  assert.strictEqual(Model.runningCount("firefox", procs), 0)
+}
+
 function testParseStatusSplitDefaults() {
   const empty = Model.parseStatus("")
   assert.strictEqual(empty.splitSupported, true)
@@ -249,5 +256,6 @@ testParseSplitSyncJunk()
 testParseRunningProcesses()
 testProcessOptions()
 testAttachedCount()
+testRunningCount()
 testParseStatusSplitDefaults()
 console.log("ok")
