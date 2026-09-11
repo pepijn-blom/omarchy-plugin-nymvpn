@@ -208,6 +208,40 @@ class SyncTests(unittest.TestCase):
         self.assertTrue(payload["supported"])
         self.assertEqual(payload["attached"], [])
 
+    def test_add_failure_is_reported(self):
+        def fake_vpnc(args, timeout=20):
+            if args[:2] == ["split-tunnel", "get"]:
+                return 0, SPLIT_GET_ON, ""
+            if args[:2] == ["split-tunnel", "excluded-processes"]:
+                return 0, EXCLUDED_NONE, ""
+            if args[:2] == ["split-tunnel", "add-process"]:
+                return 1, "", "permission denied"
+            return 1, "", "unexpected"
+
+        processes = [{"name": "agy", "pids": [42], "exe": "", "comm": "agy"}]
+        with mock.patch.object(nymsplit, "run_vpnc", side_effect=fake_vpnc), \
+             mock.patch.object(nymsplit, "scan_proc", return_value=processes):
+            payload = nymsplit.sync_excludes(["agy"])
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["supported"])
+        self.assertIn("add-process 42", payload["error"])
+
+    def test_remove_failure_is_reported(self):
+        def fake_vpnc(args, timeout=20):
+            if args[:2] == ["split-tunnel", "get"]:
+                return 0, SPLIT_GET_ON, ""
+            if args[:2] == ["split-tunnel", "excluded-processes"]:
+                return 0, EXCLUDED_TWO, ""
+            if args[:2] == ["split-tunnel", "remove-process"]:
+                return 1, "", "permission denied"
+            return 0, "", ""
+
+        with mock.patch.object(nymsplit, "run_vpnc", side_effect=fake_vpnc), \
+             mock.patch.object(nymsplit, "scan_proc", return_value=[]):
+            payload = nymsplit.sync_excludes([])
+        self.assertFalse(payload["ok"])
+        self.assertIn("remove-process", payload["error"])
+
 
 class MainTests(unittest.TestCase):
     def test_list_running_emits_json(self):

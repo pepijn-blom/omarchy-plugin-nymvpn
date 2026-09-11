@@ -28,7 +28,7 @@ Item {
   property string profile: "fastest"
   property bool profileSupported: false
   property bool geoExclusion: false
-  property string geoExclusionCountries: "CN"
+  property string geoExclusionCountries: ""
   property bool sentry: true
   property bool networkStats: true
   property bool diagnosing: false
@@ -125,7 +125,7 @@ Item {
     profile = String(parsed.profile || "fastest")
     profileSupported = parsed.profileSupported === true
     geoExclusion = parsed.geoExclusion === true
-    geoExclusionCountries = String(parsed.geoExclusionCountries || "CN")
+    geoExclusionCountries = String(parsed.geoExclusionCountries !== undefined && parsed.geoExclusionCountries !== null ? parsed.geoExclusionCountries : "")
     sentry = parsed.sentry !== false
     networkStats = parsed.networkStats !== false
     statusText = String(parsed.statusText || (installed ? "Disconnected" : "Not installed"))
@@ -164,6 +164,20 @@ Item {
   property var _syncedSettings: ({})
   property bool _autoConnectAttempted: false
 
+  function normalizeGeoCountries(raw) {
+    var parts = String(raw || "").toUpperCase().split(/[\s,]+/)
+    var cleaned = []
+    var seen = {}
+    for (var i = 0; i < parts.length; i++) {
+      var code = parts[i]
+      if (/^[A-Z]{2}$/.test(code) && !seen[code]) {
+        seen[code] = true
+        cleaned.push(code)
+      }
+    }
+    return cleaned.join(" ")
+  }
+
   function syncConfiguredSettings(snapshot) {
     if (!installed || !daemon || !snapshot || actionProcess.running) return
 
@@ -191,16 +205,20 @@ Item {
       }
     }
 
-    if (settings && settings.customDnsServers && _syncedSettings.customDnsServers !== settings.customDnsServers) {
+    if (settings && settings.customDnsServers !== undefined && settings.customDnsServers !== null && _syncedSettings.customDnsServers !== settings.customDnsServers) {
       _syncedSettings.customDnsServers = settings.customDnsServers
       setCustomDnsServers(settings.customDnsServers)
       return
     }
 
-    if (settings && settings.geoExclusionCountries && _syncedSettings.geoExclusionCountries !== settings.geoExclusionCountries) {
-      _syncedSettings.geoExclusionCountries = settings.geoExclusionCountries
-      setGeoExclusionCountries(settings.geoExclusionCountries)
-      return
+    if (settings && settings.geoExclusionCountries !== undefined && settings.geoExclusionCountries !== null) {
+      var wantGeo = normalizeGeoCountries(settings.geoExclusionCountries)
+      var haveGeo = normalizeGeoCountries(snapshot.geoExclusionCountries)
+      if ((wantGeo !== haveGeo || _syncedSettings.geoExclusionCountries !== wantGeo) && _syncedSettings.geoExclusionCountries !== settings.geoExclusionCountries) {
+        _syncedSettings.geoExclusionCountries = settings.geoExclusionCountries
+        setGeoExclusionCountries(wantGeo)
+        return
+      }
     }
 
     if (settings && settings.defaultEntryCountry && !snapshot.entryCountry && _syncedSettings.defaultEntryCountry !== settings.defaultEntryCountry) {
@@ -315,58 +333,67 @@ Item {
   }
 
   function setTwoHop(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     var on = enabled === true || enabled === "wg" || enabled === "on"
     twoHop = on
+    _syncedSettings["twoHop"] = on
     runAction(["nym-vpnc", "tunnel", "set", "--two-hop", on ? "on" : "off"])
   }
 
   function setIpv6(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     ipv6 = enabled === true
+    _syncedSettings["ipv6"] = ipv6
     runAction(["nym-vpnc", "tunnel", "set", "--ipv6", ipv6 ? "on" : "off"])
   }
 
   function setCircumvention(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     circumvention = enabled === true
+    _syncedSettings["circumvention"] = circumvention
     runAction(["nym-vpnc", "tunnel", "set", "--circumvention-transports", circumvention ? "on" : "off"])
   }
 
   function setLanAllow(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     lanAllow = enabled === true
+    _syncedSettings["lanAllow"] = lanAllow
     runAction(["nym-vpnc", "lan", "set", lanAllow ? "allow" : "block"])
   }
 
   function setAdBlock(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     adBlock = enabled === true
+    _syncedSettings["adBlock"] = adBlock
     runAction(["nym-vpnc", "ad-block", "set", adBlock ? "on" : "off"])
   }
 
   function setCustomDns(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     customDns = enabled === true
+    _syncedSettings["customDns"] = customDns
     runAction(["nym-vpnc", "dns", customDns ? "enable" : "disable"])
   }
 
   function setResidentialExit(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     residentialExit = enabled === true
+    _syncedSettings["residentialExit"] = residentialExit
     runAction(["nym-vpnc", "gateway", "set", "--residential-exit", residentialExit ? "on" : "off"])
   }
 
   function setGatewayIndependence(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     gatewayIndependence = enabled === true
+    _syncedSettings["gatewayIndependence"] = gatewayIndependence
     runAction(["nym-vpnc", "tunnel", "set", "--gateway-independence", gatewayIndependence ? "on" : "off"])
   }
 
   function setProfile(name) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     var p = String(name || "fastest").toLowerCase()
     profile = p
+    _syncedSettings["profile"] = p
     if (profileSupported) {
       runAction(["nym-vpnc", "profile", "set", p])
     } else {
@@ -390,37 +417,39 @@ Item {
   }
 
   function setGeoExclusion(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     geoExclusion = enabled === true
+    _syncedSettings["geoExclusion"] = geoExclusion
     runAction(["nym-vpnc", "geo-exclusion", "set", "enabled", geoExclusion ? "on" : "off"])
   }
 
   function setGeoExclusionCountries(countries) {
-    if (!installed || actionProcess.running) return
-    var raw = String(countries || "").trim()
-    var parts = raw.split(/[\s,]+/)
+    if (!installed) return
+    // Daemon v2026.12.2 only accepts CN and RU; anything else is rejected
+    // with "unsupported country code". Normalize to ISO shape here and let
+    // the daemon error surface via lastError/actionStatus on rejection.
+    var joined = normalizeGeoCountries(countries)
     var cmd = ["nym-vpnc", "geo-exclusion", "set", "excluded-countries"]
-    var cleaned = []
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i].length > 0) {
-        var code = parts[i].toUpperCase()
-        cmd.push(code)
-        cleaned.push(code)
-      }
+    if (joined !== "") {
+      var codes = joined.split(" ")
+      for (var i = 0; i < codes.length; i++) cmd.push(codes[i])
     }
-    geoExclusionCountries = cleaned.join(" ")
+    geoExclusionCountries = joined
+    _syncedSettings["geoExclusionCountries"] = countries
     runAction(cmd)
   }
 
   function setSentry(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     sentry = enabled === true
+    _syncedSettings["sentry"] = sentry
     runAction(["nym-vpnc", "sentry", "set", sentry ? "on" : "off"])
   }
 
   function setNetworkStats(enabled) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     networkStats = enabled === true
+    _syncedSettings["networkStats"] = networkStats
     runAction(["nym-vpnc", "network-stats", "set", "--enabled", networkStats ? "on" : "off"])
   }
 
@@ -433,7 +462,7 @@ Item {
   }
 
   function setCustomDnsServers(servers) {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
     var raw = String(servers || "").trim()
     var parts = raw.split(/[\s,]+/)
     if (parts.length === 0 || parts[0] === "") return
@@ -441,13 +470,15 @@ Item {
     for (var i = 0; i < parts.length; i++) {
       if (parts[i].length > 0) cmd.push(parts[i])
     }
+    _syncedSettings["customDnsServers"] = raw
     runAction(cmd)
   }
 
   function setEntryCountry(code) {
     var value = Model.asCountryCodes([code])[0] || ""
-    if (!installed || value === "" || actionProcess.running) return
+    if (!installed || value === "") return
     entryCountry = value
+    _syncedSettings["defaultEntryCountry"] = value
     runAction(["nym-vpnc", "gateway", "set", "--entry-country", value])
   }
 
@@ -486,8 +517,9 @@ Item {
 
   function setExitCountry(code) {
     var value = Model.asCountryCodes([code])[0] || ""
-    if (!installed || value === "" || actionProcess.running) return
+    if (!installed || value === "") return
     exitCountry = value
+    _syncedSettings["defaultExitCountry"] = value
     runAction(["nym-vpnc", "gateway", "set", "--exit-country", value])
   }
 
@@ -655,7 +687,8 @@ Item {
         }
         root.actionStatus = root.lastError
         actionStatusTimer.restart()
-        root._actionQueue = []
+        // Do not drop queued actions here: a failed auto-sync must not
+        // swallow a user toggle queued behind it. The queue drains below.
       } else {
         root.lastError = ""
         root.actionStatus = ""

@@ -15,6 +15,7 @@ This is an unofficial third-party Quickshell plugin (`pepijn-blom.nymvpn`). It t
 - Fair-use usage (`used / limit` plus reset time)
 - Sign in with a recovery phrase when no account is stored on the device
 - Collapsible settings: ads, IPv6, LAN bypass, anti-censorship, residential exit, custom DNS
+- Geo-exclusion: bypass the tunnel for CN / RU only (the only codes `nym-vpnc` v2026.12.2 accepts; other ISO codes are rejected by the daemon and the field snaps back to the daemon truth)
 - Bypass VPN: exclude named processes (type a name like `agy`, or pick from what is running)
 
 ## Icon
@@ -96,7 +97,7 @@ If the icon does not appear after the first install, run `omarchy restart shell`
 
 The helper parses `nym-vpnc` text output and forwards a small JSON snapshot to the bar. Account addresses (`n1…`) are redacted and are not stored in plugin settings.
 
-Sign-in is handled by a separate `login.py` helper. The recovery phrase is typed into a masked field, sent once over stdin (never as a command-line argument, environment variable, IPC method, or plugin setting), then wiped from the panel. Helper output is sanitized so the phrase cannot appear in status or error text. The daemon stores the account; this plugin does not.
+Sign-in is handled by a separate `login.py` helper. The recovery phrase is typed into a masked field, sent once over stdin to the helper (never stored in plugin settings or IPC), then wiped from the panel. The helper must pass the phrase to `nym-vpnc account set <SECRET>` as a command-line argument because that CLI offers no stdin option, so the phrase is briefly visible to same-user processes via `/proc/<pid>/cmdline`; the helper makes a best-effort attempt to overwrite that memory after spawn, which can fail depending on permissions. Helper output is sanitized so the phrase cannot appear in status or error text. The daemon stores the account; this plugin does not.
 
 ## Development
 

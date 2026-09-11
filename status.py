@@ -352,19 +352,29 @@ def parse_gateway_get(raw: str) -> dict[str, Any]:
     text = str(raw or "")
     entry = ""
     exit_country = ""
+    entry_random = False
+    exit_random = False
     residential = False
     for line in text.splitlines():
         lower = line.lower()
         match = COUNTRY_POINT_RE.search(line)
-        if "entry point:" in lower and match:
-            entry = match.group(1).upper()
-        elif "exit point:" in lower and match:
-            exit_country = match.group(1).upper()
+        if "entry point:" in lower:
+            if match:
+                entry = match.group(1).upper()
+            elif "random" in lower:
+                entry_random = True
+        elif "exit point:" in lower:
+            if match:
+                exit_country = match.group(1).upper()
+            elif "random" in lower:
+                exit_random = True
         elif "residential exit:" in lower:
             residential = _is_on(line.split(":", 1)[-1])
     return {
         "entryCountry": entry,
         "exitCountry": exit_country,
+        "entryRandom": entry_random,
+        "exitRandom": exit_random,
         "residentialExit": residential,
     }
 
@@ -713,8 +723,8 @@ def merge_snapshot(
     snap["profile"] = derive_profile(
         snap["twoHop"],
         snap["circumvention"],
-        snap["entryCountry"],
-        snap["exitCountry"],
+        "Random" if gateway.get("entryRandom") else snap["entryCountry"],
+        "Random" if gateway.get("exitRandom") else snap["exitCountry"],
     )
     snap["profileSupported"] = bool(is_profile_supported())
 

@@ -34,7 +34,7 @@
       "autoConnect": false,
       "profile": "fastest",
       "geoExclusion": false,
-      "geoExclusionCountries": "CN",
+      "geoExclusionCountries": "",
       "sentry": true,
       "networkStats": true
     },
@@ -141,8 +141,8 @@
         "key": "geoExclusionCountries",
         "type": "string",
         "label": "Geo-exclusion countries",
-        "description": "Space-separated ISO country codes to bypass (e.g. CN RU).",
-        "defaultValue": "CN"
+        "description": "Space-separated ISO country codes to bypass. Daemon v2026.12.2 only accepts CN and RU.",
+        "defaultValue": ""
       },
       {
         "key": "sentry",

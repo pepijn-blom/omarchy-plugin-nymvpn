@@ -128,6 +128,8 @@ Panel {
   ]
 
   function persistSetting(key, val) {
+    if (settings) settings[key] = val
+    if (root.settings) root.settings[key] = val
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
     var entry = { id: root.moduleName }
     for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
@@ -222,23 +224,32 @@ Panel {
     }
   }
 
-  function applyGeoCountries(codes) {
+  function normalizeGeoInput(codes) {
     var raw = String(codes || "").trim().toUpperCase()
-    var parts = raw.split(/[\s,]+/).filter(function(s) { return s.length > 0 })
-    var joined = parts.join(" ")
+    var parts = raw.split(/[\s,]+/).filter(function(s) { return /^[A-Z]{2}$/.test(s) })
+    var seen = {}
+    var out = []
+    for (var i = 0; i < parts.length; i++) {
+      if (!seen[parts[i]]) {
+        seen[parts[i]] = true
+        out.push(parts[i])
+      }
+    }
+    return out.join(" ")
+  }
+
+  function applyGeoCountries(codes) {
+    var joined = normalizeGeoInput(codes)
     persistSetting("geoExclusionCountries", joined)
     nym.setGeoExclusionCountries(joined)
   }
 
-  function appendGeoCountry(code) {
-    var raw = String(nym.geoExclusionCountries || "").trim().toUpperCase()
-    var parts = raw.split(/[\s,]+/).filter(function(s) { return s.length > 0 })
-    if (parts.indexOf(code) < 0) {
-      parts.push(code)
-    }
-    var joined = parts.join(" ")
+  function appendGeoCountry(code, currentText) {
+    var base = (currentText !== undefined && currentText !== null) ? currentText : nym.geoExclusionCountries
+    var joined = normalizeGeoInput(String(base || "") + " " + String(code || ""))
     persistSetting("geoExclusionCountries", joined)
     nym.setGeoExclusionCountries(joined)
+    return joined
   }
 
   function applyDnsServers(servers) {
@@ -1263,7 +1274,7 @@ Panel {
 
                         Text {
                           width: parent.width
-                          text: "Direct connections outside tunnel (ISO-3166-1 alpha-2):"
+                          text: "Direct connections outside tunnel. Daemon v2026.12.2 only supports CN and RU — other codes are rejected."
                           color: root.dim
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
@@ -1305,8 +1316,8 @@ Panel {
                             foreground: root.foreground
                             fontFamily: root.fontFamily
                             onClicked: {
-                              root.appendGeoCountry("CN")
-                              geoCountriesField.text = nym.geoExclusionCountries
+                              var next = root.appendGeoCountry("CN", geoCountriesField.text)
+                              geoCountriesField.text = next
                             }
                           }
 
@@ -1317,8 +1328,8 @@ Panel {
                             foreground: root.foreground
                             fontFamily: root.fontFamily
                             onClicked: {
-                              root.appendGeoCountry("RU")
-                              geoCountriesField.text = nym.geoExclusionCountries
+                              var next = root.appendGeoCountry("RU", geoCountriesField.text)
+                              geoCountriesField.text = next
                             }
                           }
 

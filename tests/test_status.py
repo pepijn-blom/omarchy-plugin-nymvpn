@@ -143,6 +143,18 @@ class ParseGatewayTests(unittest.TestCase):
         self.assertEqual(parsed["entryCountry"], "")
         self.assertEqual(parsed["exitCountry"], "")
         self.assertTrue(parsed["residentialExit"])
+        self.assertTrue(parsed["entryRandom"])
+        self.assertFalse(parsed["exitRandom"])
+
+    def test_random_profile_derived(self):
+        snap = nymstatus.merge_snapshot(
+            installed=True,
+            daemon=True,
+            status=nymstatus.parse_status_line(STATUS_DISCONNECTED),
+            gateway=nymstatus.parse_gateway_get(GATEWAY_GET_RANDOM),
+            tunnel=nymstatus.parse_tunnel_get(TUNNEL_GET),
+        )
+        self.assertEqual(snap["profile"], "random")
 
     def test_list_unique_countries(self):
         countries = nymstatus.parse_gateway_list_countries(GATEWAY_LIST)

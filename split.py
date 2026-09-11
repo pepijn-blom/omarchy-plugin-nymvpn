@@ -242,10 +242,23 @@ def sync_excludes(
     _ex_code, ex_out, ex_err = run_vpnc(["split-tunnel", "excluded-processes"])
     excluded = parse_excluded_processes(_combined(ex_out, ex_err))
     add, remove = sync_delta(processes, clean, excluded)
+    errors: list[str] = []
     for pid in add:
-        run_vpnc(["split-tunnel", "add-process", str(pid)])
+        code, _out, err = run_vpnc(["split-tunnel", "add-process", str(pid)])
+        if code != 0:
+            errors.append(f"add-process {pid}: {(err or '').strip() or 'failed'}")
     for pid in remove:
-        run_vpnc(["split-tunnel", "remove-process", str(pid)])
+        code, _out, err = run_vpnc(["split-tunnel", "remove-process", str(pid)])
+        if code != 0:
+            errors.append(f"remove-process {pid}: {(err or '').strip() or 'failed'}")
+    if errors:
+        return {
+            "ok": False,
+            "supported": True,
+            "names": clean,
+            "attached": attached_for(processes, clean),
+            "error": "; ".join(errors),
+        }
     return {
         "ok": True,
         "supported": True,
