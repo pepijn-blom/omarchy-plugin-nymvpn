@@ -36,7 +36,8 @@
       "geoExclusion": false,
       "geoExclusionCountries": "",
       "sentry": true,
-      "networkStats": true
+      "networkStats": true,
+      "splitExclude": []
     },
     "schema": [
       {

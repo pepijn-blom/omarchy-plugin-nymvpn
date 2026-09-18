@@ -127,14 +127,31 @@ Panel {
     }
   ]
 
+  function persistableEntry(overrides) {
+    var entry = { id: root.moduleName }
+    for (var prop in settings) {
+      if (prop === "id") continue
+      entry[prop] = settings[prop]
+    }
+    entry.splitExclude = Model.asProcessNames(settings ? settings.splitExclude : []).slice()
+    if (overrides) {
+      for (var key in overrides) {
+        if (key === "id") continue
+        entry[key] = overrides[key]
+      }
+    }
+    if (overrides && overrides.splitExclude !== undefined)
+      entry.splitExclude = Model.asProcessNames(overrides.splitExclude).slice()
+    return entry
+  }
+
   function persistSetting(key, val) {
     if (settings) settings[key] = val
     if (root.settings) root.settings[key] = val
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
-    var entry = { id: root.moduleName }
-    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
-    entry[key] = val
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    var extra = {}
+    extra[key] = val
+    root.bar.shell.updateEntryInline(root.moduleName, persistableEntry(extra))
   }
 
   function persistRecent(kind, code) {
@@ -148,10 +165,9 @@ Panel {
       var existing = current[i]
       if (existing !== name) next.push(existing)
     }
-    var entry = { id: root.moduleName }
-    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
-    entry[key] = next
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    var extra = {}
+    extra[key] = next
+    root.bar.shell.updateEntryInline(root.moduleName, persistableEntry(extra))
   }
 
   function chooseEntry(code) {
@@ -261,11 +277,12 @@ Panel {
   }
 
   function persistSplitExclude(names) {
+    var next = Model.asProcessNames(names)
+    if (settings) settings.splitExclude = next
+    if (root.settings) root.settings.splitExclude = next
+    nym.setSplitExclude(next)
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
-    var entry = { id: root.moduleName }
-    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
-    entry.splitExclude = Model.asProcessNames(names)
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    root.bar.shell.updateEntryInline(root.moduleName, persistableEntry({ splitExclude: next }))
   }
 
   function addSplitName(name) {
@@ -295,10 +312,7 @@ Panel {
 
   function persistSettingsOpen(open) {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
-    var entry = { id: root.moduleName }
-    for (var prop in settings) if (prop !== "id") entry[prop] = settings[prop]
-    entry.settingsOpen = open === true
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    root.bar.shell.updateEntryInline(root.moduleName, persistableEntry({ settingsOpen: open === true }))
   }
 
   function setSettingsOpen(open) {
@@ -406,9 +420,12 @@ Panel {
   }
 
   function requestToggle() {
-    if (nym.connecting || nym.state === "Error") {
+    if (nym.connecting) {
       nym.hardDisconnect()
       return true
+    }
+    if (nym.state === "Error") {
+      return nym.connectVpn()
     }
     if (nym.active || nym.running) {
       nym.disconnectVpn()
@@ -1462,7 +1479,7 @@ Panel {
                   TextField {
                     id: splitNameField
                     width: parent.width
-                    placeholderText: "Process name, e.g. agy"
+                    placeholderText: "Name or path, e.g. ssh or /usr/bin/ssh"
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     foreground: root.foreground

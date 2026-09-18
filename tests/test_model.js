@@ -166,8 +166,33 @@ function testReconcileDesired() {
 
 function testProcessNames() {
   assert.deepStrictEqual(Model.asProcessNames(["  AgY ", "agy", "firefox", "agy/bin", "", null]), ["agy", "firefox"])
-  assert.deepStrictEqual(Model.asProcessNames("agy"), [])
+  assert.deepStrictEqual(Model.asProcessNames("agy"), ["agy"])
   assert.deepStrictEqual(Model.asProcessNames(undefined), [])
+}
+
+function testProcessNamesAcceptsArrayLike() {
+  assert.deepStrictEqual(Model.asProcessNames({ 0: "ssh", 1: "netbird", length: 2 }), ["ssh", "netbird"])
+}
+
+function testProcessNamesAcceptsObjectMap() {
+  assert.deepStrictEqual(Model.asProcessNames({ 0: "ssh", 1: "netbird" }), ["ssh", "netbird"])
+}
+
+function testProcessNamesAcceptsString() {
+  assert.deepStrictEqual(Model.asProcessNames("netbird /usr/bin/ssh ssh"), ["netbird", "/usr/bin/ssh", "ssh"])
+}
+
+function testProcessNamesSurvivesJson() {
+  const names = Model.asProcessNames({ 0: "ssh", 1: "netbird", length: 2 })
+  const roundtrip = JSON.parse(JSON.stringify({ splitExclude: names }))
+  assert.deepStrictEqual(roundtrip.splitExclude, ["ssh", "netbird"])
+}
+
+function testProcessNamesAcceptsAbsolutePaths() {
+  assert.deepStrictEqual(
+    Model.asProcessNames(["/usr/bin/ssh", "/usr/bin/ssh", "ssh", "/usr/bin/../bin/ssh", "usr/bin/ssh"]),
+    ["/usr/bin/ssh", "ssh"]
+  )
 }
 
 function testParseSplitSync() {
@@ -251,6 +276,11 @@ testConnectBlockReason()
 testConnectBlockMessage()
 testReconcileDesired()
 testProcessNames()
+testProcessNamesAcceptsArrayLike()
+testProcessNamesAcceptsObjectMap()
+testProcessNamesAcceptsString()
+testProcessNamesSurvivesJson()
+testProcessNamesAcceptsAbsolutePaths()
 testParseSplitSync()
 testParseSplitSyncJunk()
 testParseRunningProcesses()

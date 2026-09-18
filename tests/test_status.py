@@ -27,6 +27,9 @@ STATUS_ERROR_BANDWIDTH = """State: Error state: BandwidthExceeded
 STATUS_ERROR_MAX_DEVICES = """State: Error state: MaxDevicesReached
 """
 
+STATUS_ERROR_CONNECTION_ATTEMPTS = """State: Error state: ConnectionAttemptsExceeded
+"""
+
 GATEWAY_GET = """Entry point: Country { two_letter_iso_country_code: "US" }
 Exit point: Country { two_letter_iso_country_code: "JP" }
 Residential exit: off
@@ -129,6 +132,14 @@ class ParseStatusLineTests(unittest.TestCase):
         self.assertEqual(parsed["state"], "Error")
         self.assertEqual(parsed["lastError"], "Device limit reached")
         self.assertEqual(parsed["statusText"], "Device limit reached")
+
+    def test_connection_attempts_error(self):
+        parsed = nymstatus.parse_status_line(STATUS_ERROR_CONNECTION_ATTEMPTS)
+        self.assertFalse(parsed["running"])
+        self.assertFalse(parsed["connecting"])
+        self.assertEqual(parsed["state"], "Error")
+        self.assertEqual(parsed["lastError"], "Connection failed (network drop or unreachable)")
+        self.assertEqual(parsed["statusText"], "Connection failed (network drop or unreachable)")
 
 
 class ParseGatewayTests(unittest.TestCase):

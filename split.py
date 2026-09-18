@@ -9,6 +9,8 @@ split-tunnel add-process / remove-process.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,15 +19,29 @@ from typing import Any
 
 COMM_MAX = 15
 NAME_MAX = 128
+PATH_MAX = 4096
 SKIP_NAMES = frozenset({"nym-vpnd", "nym-vpnc", "nym-exclude"})
+SKIP_WRAPPER_NAMES = frozenset({"netbird", "tailscaled", "systemd", "nym-vpnd", "nym-vpnc", "nym-exclude"})
 VPNC_TIMEOUT_SEC = 20
+WRAPPER_MARKER = "# omarchy-nymvpn-bypass"
+DEFAULT_BINDIRS = ("/usr/bin", "/usr/sbin", "/bin")
 
 
 def normalize_name(value: Any) -> str:
-    text = str(value or "").strip().lower()
+    text = str(value or "").strip()
+    if not text or "\x00" in text or "\\" in text:
+        return ""
+    if text.startswith("/"):
+        if text == "/" or len(text) > PATH_MAX:
+            return ""
+        path = Path(text)
+        if ".." in path.parts:
+            return ""
+        return str(path)
+    text = text.lower()
     if not text or len(text) > NAME_MAX:
         return ""
-    if "/" in text or "\\" in text or "\x00" in text:
+    if "/" in text:
         return ""
     return text
 
@@ -55,6 +71,18 @@ def process_matches(needle: str, comm: str, exe: str) -> bool:
     name = normalize_name(needle)
     if not name:
         return False
+    if name.startswith("/"):
+        exe_s = str(exe or "")
+        if exe_s == name:
+            return True
+        try:
+            if exe_s and Path(exe_s).resolve() == Path(name).resolve():
+                return True
+        except OSError:
+            pass
+        name = normalize_name(Path(name).name)
+        if not name:
+            return False
     comm_n = normalize_name(str(comm or "").strip())
     exe_n = normalize_name(Path(str(exe or "")).name)
     if name == comm_n or name == exe_n:
@@ -213,6 +241,100 @@ def _combined(stdout: str, stderr: str) -> str:
     return (stdout or "") + ("\n" + stderr if stderr else "")
 
 
+def default_wrapper_dir() -> Path:
+    override = os.environ.get("OMARCHY_NYMVPN_WRAPPER_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".local" / "bin"
+
+
+def wrapper_name(value: str) -> str:
+    name = normalize_name(value)
+    if not name or is_skipped_name(name) or name in SKIP_WRAPPER_NAMES or Path(name).name in SKIP_WRAPPER_NAMES:
+        return ""
+    return Path(name).name
+
+
+def real_binary(name: str, bindir: str | Path | None = None) -> str:
+    needle = normalize_name(name)
+    if not needle or is_skipped_name(needle):
+        return ""
+    if needle.startswith("/"):
+        path = Path(needle)
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        return ""
+    roots = [Path(bindir)] if bindir else [Path(item) for item in DEFAULT_BINDIRS]
+    for root in roots:
+        candidate = root / needle
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
+
+
+def wrapper_script(real: str, exclude_bin: str) -> str:
+    return (
+        "#!/bin/sh\n"
+        f"{WRAPPER_MARKER}\n"
+        f"exec {shlex.quote(exclude_bin)} {shlex.quote(real)} \"$@\"\n"
+    )
+
+
+def is_our_wrapper(path: Path) -> bool:
+    try:
+        if path.stat().st_size > 4096:
+            return False
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return WRAPPER_MARKER in text.splitlines()[:4]
+
+
+def _write_wrapper(dest: Path, real: str, exclude_bin: str) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text(wrapper_script(real, exclude_bin), encoding="utf-8")
+    tmp.chmod(0o755)
+    tmp.replace(dest)
+
+
+def sync_wrappers(
+    names: list[str],
+    *,
+    wrapper_dir: str | Path | None = None,
+    bindir: str | Path | None = None,
+    exclude_bin: str | Path | None = None,
+) -> list[str]:
+    dest_root = Path(wrapper_dir) if wrapper_dir else default_wrapper_dir()
+    exclude = str(exclude_bin) if exclude_bin else (shutil.which("nym-exclude") or "")
+    wanted: dict[str, str] = {}
+    if exclude:
+        for name in normalize_names(names):
+            dest_name = wrapper_name(name)
+            real = real_binary(name, bindir=bindir)
+            if not dest_name or not real:
+                continue
+            wanted[dest_name] = real
+    installed: list[str] = []
+    if exclude:
+        for dest_name, real in wanted.items():
+            dest = dest_root / dest_name
+            if dest.exists() and not is_our_wrapper(dest):
+                continue
+            _write_wrapper(dest, real, exclude)
+            installed.append(dest_name)
+    if dest_root.is_dir():
+        for entry in dest_root.iterdir():
+            if not entry.is_file() or entry.name in wanted:
+                continue
+            if is_our_wrapper(entry):
+                try:
+                    entry.unlink()
+                except OSError:
+                    continue
+    return installed
+
+
 def sync_excludes(
     names: list[str],
     proc_root: str | Path | None = None,
@@ -257,6 +379,7 @@ def sync_excludes(
             "supported": True,
             "names": clean,
             "attached": attached_for(processes, clean),
+            "wrappers": sync_wrappers(clean),
             "error": "; ".join(errors),
         }
     return {
@@ -264,6 +387,7 @@ def sync_excludes(
         "supported": True,
         "names": clean,
         "attached": attached_for(processes, clean),
+        "wrappers": sync_wrappers(clean),
     }
 
 

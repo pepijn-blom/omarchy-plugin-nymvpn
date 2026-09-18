@@ -15,8 +15,8 @@ This is an unofficial third-party Quickshell plugin (`pepijn-blom.nymvpn`). It t
 - Fair-use usage (`used / limit` plus reset time)
 - Sign in with a recovery phrase when no account is stored on the device
 - Collapsible settings: ads, IPv6, LAN bypass, anti-censorship, residential exit, custom DNS
+- Bypass VPN: exclude named processes or absolute paths (type `ssh` or `/usr/bin/ssh` even if it is not running)
 - Geo-exclusion: bypass the tunnel for CN / RU only (the only codes `nym-vpnc` v2026.12.2 accepts; other ISO codes are rejected by the daemon and the field snaps back to the daemon truth)
-- Bypass VPN: exclude named processes (type a name like `agy`, or pick from what is running)
 
 ## Icon
 
@@ -39,7 +39,7 @@ Inside the panel:
 - `r`: refresh status
 - `x` / `d`: force disconnect
 - `esc`: close (or clear the recovery-phrase field if it is focused)
-- Settings header: expand or collapse. On a setting row, `enter` / `space` or left/right toggles it. Below the toggles, Bypass VPN lists excluded processes; `enter` removes a name, focuses the add field, or opens the running-process picker.
+- Settings header: expand or collapse. On a setting row, `enter` / `space` or left/right toggles it. Below the toggles, Bypass VPN lists excluded processes; `enter` removes a name, focuses the add field (name or absolute path), or opens the running-process picker.
 - When no account is stored: connect attempts (switch, `t`, right-click, IPC) show **Sign in to connect** and focus the recovery-phrase field. `enter` on the account section also focuses the field. `enter` in the field signs in.
 
 ## Requirements
@@ -87,7 +87,7 @@ If the icon does not appear after the first install, run `omarchy restart shell`
 ## Usage
 
 - **Bar:** left click for the panel, right click to connect/disconnect, middle click to refresh. Right click does not start a tunnel when no account is stored — it opens the panel and focuses sign-in.
-- **Bypass VPN:** under Settings, add process names that should skip the tunnel (for example `agy` if Antigravity misbehaves through Nym). You can type a name or pick from currently running processes. Linux NymVPN only supports exclude-by-PID, so the plugin keeps matching processes attached while you are connected. Attaching a PID does not migrate sockets already opened through the tunnel — restart the app, or reconnect, after adding it.
+- **Bypass VPN:** under Settings, add process names or absolute paths that should skip the tunnel (for example `ssh`, `/usr/bin/ssh`, or `agy`). Type a name or path even if the process is not running yet, or pick from what is running. Linux NymVPN only supports exclude-by-PID, which is too late for short-lived tools like `ssh` (they connect before the next PID sync). For those, the plugin installs a `nym-exclude` wrapper in `~/.local/bin` so new processes start outside the tunnel. Attaching a running PID does not migrate sockets already opened through the tunnel — restart the app, or reconnect, after adding it.
 - **Sign in:** if the panel shows no account on this device, paste your recovery phrase and choose Sign in (or Create account to open the Nym site). The power switch, `t`, and `toggleVpn` / `connectVpn` IPC all refuse connect until then.
 - **IPC:** `omarchy-shell shell summon pepijn-blom.nymvpn`, `omarchy-shell pepijn-blom.nymvpn toggleVpn`, `omarchy-shell pepijn-blom.nymvpn status`. Blocked connects return `Sign in to connect` (or `nym-vpnd is not running`) instead of `ok`.
 

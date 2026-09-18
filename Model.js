@@ -93,20 +93,59 @@ function asCountryCodes(value) {
 }
 
 var PROCESS_NAME_MAX = 128
+var PROCESS_PATH_MAX = 4096
+
+function asArray(value) {
+  if (typeof value === "string") {
+    var trimmed = value.trim()
+    return trimmed === "" ? [] : trimmed.split(/[\s\n]+/)
+  }
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== "object") return []
+  var length = Number(value.length)
+  if (isFinite(length) && length >= 0 && typeof value.length !== "undefined") {
+    var rows = []
+    for (var i = 0; i < length; i++) rows.push(value[i])
+    return rows
+  }
+  var keys = []
+  for (var key in value) {
+    if (!/^\d+$/.test(key)) continue
+    keys.push(Number(key))
+  }
+  keys.sort(function(a, b) { return a - b })
+  var mapped = []
+  for (var k = 0; k < keys.length; k++) mapped.push(value[keys[k]])
+  return mapped
+}
+
+function asProcessPath(value) {
+  var path = String(value || "").trim()
+  if (path.charAt(0) !== "/" || path === "/") return ""
+  if (path.length > PROCESS_PATH_MAX) return ""
+  if (path.indexOf("\\") >= 0 || path.indexOf("\0") >= 0) return ""
+  var parts = path.split("/")
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === "..") return ""
+  }
+  return path
+}
 
 function asProcessName(value) {
-  var name = String(value || "").trim().toLowerCase()
+  var raw = String(value || "").trim()
+  if (raw.charAt(0) === "/") return asProcessPath(raw)
+  var name = raw.toLowerCase()
   if (name === "" || name.length > PROCESS_NAME_MAX) return ""
   if (name.indexOf("/") >= 0 || name.indexOf("\\") >= 0) return ""
   return name
 }
 
 function asProcessNames(value) {
-  if (!Array.isArray(value)) return []
+  var source = asArray(value)
   var rows = []
   var seen = {}
-  for (var i = 0; i < value.length; i++) {
-    var name = asProcessName(value[i])
+  for (var i = 0; i < source.length; i++) {
+    var name = asProcessName(source[i])
     if (name === "" || seen[name]) continue
     seen[name] = true
     rows.push(name)

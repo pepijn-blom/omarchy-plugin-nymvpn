@@ -16,6 +16,8 @@ Item {
   // Optimistic toggle: -1 follows the daemon, 0/1 until reality catches up.
   property int _desired: -1
   readonly property bool active: _desired === -1 ? running : (_desired === 1)
+  property bool _userIntentConnected: false
+  property int _reconnectRetries: 0
   property bool refreshing: false
   property bool twoHop: true
   property bool ipv6: true
@@ -57,7 +59,7 @@ Item {
   property bool loggingIn: false
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 5, 3600)
-  readonly property var splitExclude: Model.asProcessNames(settings ? settings.splitExclude : [])
+  property var splitExclude: []
   readonly property bool busy: actionProcess.running || connecting || loginProcess.running
   readonly property bool quotaWarn: Model.quotaWarning(quotaPercent, bandwidthExceeded)
   readonly property string blockReason: Model.connectBlockReason({
@@ -113,6 +115,11 @@ Item {
     daemon = parsed.daemon === true
     running = parsed.running === true
     connecting = parsed.connecting === true
+    if (running) {
+      _userIntentConnected = true
+      _reconnectRetries = 0
+      autoReconnectTimer.stop()
+    }
     _desired = Model.reconcileDesired(_desired, running, connecting)
     twoHop = parsed.twoHop === true
     ipv6 = parsed.ipv6 !== false
@@ -158,7 +165,10 @@ Item {
       if (blocked !== "") statusText = blocked
       else if (!daemon) statusText = parsed.statusText || "Daemon unavailable"
     }
-    if (installed && daemon) syncConfiguredSettings(parsed)
+    if (installed && daemon) {
+      syncConfiguredSettings(parsed)
+      checkAutoRecovery()
+    }
   }
 
   property var _syncedSettings: ({})
@@ -252,11 +262,17 @@ Item {
     if (!parsed || typeof parsed !== "object") return
     if (parsed.running !== undefined) running = parsed.running === true
     if (parsed.connecting !== undefined) connecting = parsed.connecting === true
+    if (running) {
+      _userIntentConnected = true
+      _reconnectRetries = 0
+      autoReconnectTimer.stop()
+    }
     if (parsed.state) state = String(parsed.state)
     if (parsed.statusText) statusText = String(parsed.statusText)
     if (parsed.bandwidthExceeded !== undefined) bandwidthExceeded = parsed.bandwidthExceeded === true
     if (parsed.lastError !== undefined) lastError = String(parsed.lastError || "")
     _desired = Model.reconcileDesired(_desired, running, connecting)
+    checkAutoRecovery()
   }
 
   function refresh(forceLists) {
@@ -283,11 +299,22 @@ Item {
     actionStatusTimer.restart()
   }
 
+  function checkAutoRecovery() {
+    if (!_userIntentConnected || running || connecting || state !== "Error" || _reconnectRetries >= 3) return
+    if (!autoReconnectTimer.running && !actionProcess.running) {
+      autoReconnectTimer.interval = _reconnectRetries === 0 ? 3000 : 8000
+      autoReconnectTimer.start()
+    }
+  }
+
   function toggle() {
     if (!installed) return false
-    if (state === "Error" || connecting) {
+    if (connecting) {
       hardDisconnect()
       return true
+    }
+    if (state === "Error") {
+      return connectVpn()
     }
     if (active || running) {
       disconnectVpn()
@@ -297,19 +324,32 @@ Item {
   }
 
   function connectVpn() {
-    if (!installed || actionProcess.running) return false
+    if (!installed) return false
     if (blockReason !== "") {
       warnConnectBlocked()
       return false
     }
+    _userIntentConnected = true
+    _reconnectRetries = 0
+    autoReconnectTimer.stop()
     _desired = 1
     connecting = true
+    if (state === "Error") {
+      // nym-vpnd requires clearing a faulted error state with disconnect --wait
+      // before it will accept a new connect. Queue disconnect first, then connect.
+      runAction(["nym-vpnc", "disconnect", "--wait"])
+      runAction(["nym-vpnc", "connect"])
+      return true
+    }
     runAction(["nym-vpnc", "connect"])
     return true
   }
 
   function disconnectVpn() {
-    if (!installed || actionProcess.running) return
+    if (!installed) return
+    _userIntentConnected = false
+    _reconnectRetries = 0
+    autoReconnectTimer.stop()
     _desired = 0
     connecting = false
     runAction(["nym-vpnc", "disconnect"])
@@ -317,8 +357,12 @@ Item {
 
   function hardDisconnect() {
     if (!installed) return
+    _userIntentConnected = false
+    _reconnectRetries = 0
+    autoReconnectTimer.stop()
     _desired = 0
     connecting = false
+    _actionQueue = []
     if (actionProcess.running) {
       actionProcess.running = false
       Qt.callLater(function() { runAction(["nym-vpnc", "disconnect", "--wait"]) })
@@ -480,6 +524,10 @@ Item {
     entryCountry = value
     _syncedSettings["defaultEntryCountry"] = value
     runAction(["nym-vpnc", "gateway", "set", "--entry-country", value])
+  }
+
+  function setSplitExclude(names) {
+    splitExclude = Model.asProcessNames(names)
   }
 
   function syncSplit(names) {
@@ -660,6 +708,18 @@ Item {
     onTriggered: root.ensureListen()
   }
 
+  Timer {
+    id: autoReconnectTimer
+    interval: 3000
+    repeat: false
+    onTriggered: {
+      if (root._userIntentConnected && !root.running && !root.connecting && root.state === "Error" && root._reconnectRetries < 3) {
+        root._reconnectRetries += 1
+        root.connectVpn()
+      }
+    }
+  }
+
   Process {
     id: actionProcess
     running: false
@@ -817,7 +877,10 @@ Item {
     }
   }
 
+  Component.onCompleted: splitExclude = Model.asProcessNames(settings ? settings.splitExclude : [])
+
   onSettingsChanged: {
+    splitExclude = Model.asProcessNames(settings ? settings.splitExclude : [])
     if (installed && daemon) refresh()
   }
 }

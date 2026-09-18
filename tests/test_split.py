@@ -50,6 +50,12 @@ class NormalizeNameTests(unittest.TestCase):
         self.assertEqual(nymsplit.normalize_name("agy/../bin"), "")
         self.assertEqual(nymsplit.normalize_name("a" * 300), "")
 
+    def test_absolute_path(self):
+        self.assertEqual(nymsplit.normalize_name("/usr/bin/ssh"), "/usr/bin/ssh")
+        self.assertEqual(nymsplit.normalize_name("  /usr/bin/ssh  "), "/usr/bin/ssh")
+        self.assertEqual(nymsplit.normalize_name("/usr/bin/../bin/ssh"), "")
+        self.assertEqual(nymsplit.normalize_name("usr/bin/ssh"), "")
+
 
 class ProcessMatchTests(unittest.TestCase):
     def test_matches_comm(self):
@@ -72,6 +78,11 @@ class ProcessMatchTests(unittest.TestCase):
 
     def test_unrelated_name_does_not_match(self):
         self.assertFalse(nymsplit.process_matches("agy", "firefox", "/usr/lib/firefox/firefox"))
+
+    def test_matches_absolute_exe_path(self):
+        self.assertTrue(nymsplit.process_matches("/usr/bin/ssh", "ssh", "/usr/bin/ssh"))
+        self.assertTrue(nymsplit.process_matches("/usr/bin/ssh", "ssh", "/usr/sbin/ssh"))
+        self.assertFalse(nymsplit.process_matches("/usr/bin/ssh", "firefox", "/usr/lib/firefox/firefox"))
 
 
 class SkipTests(unittest.TestCase):
@@ -241,6 +252,63 @@ class SyncTests(unittest.TestCase):
             payload = nymsplit.sync_excludes([])
         self.assertFalse(payload["ok"])
         self.assertIn("remove-process", payload["error"])
+
+
+class WrapperTests(unittest.TestCase):
+    def test_wrapper_script_execs_nym_exclude(self):
+        script = nymsplit.wrapper_script("/usr/bin/ssh", "/usr/bin/nym-exclude")
+        self.assertIn(nymsplit.WRAPPER_MARKER, script)
+        self.assertIn("exec /usr/bin/nym-exclude /usr/bin/ssh \"$@\"", script)
+
+    def test_sync_wrappers_installs_and_removes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "ssh"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            exclude = root / "nym-exclude"
+            exclude.write_text("#!/bin/sh\n", encoding="utf-8")
+            exclude.chmod(0o755)
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            installed = nymsplit.sync_wrappers(
+                ["ssh"],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=exclude,
+            )
+            dest = dest_dir / "ssh"
+            self.assertEqual(installed, ["ssh"])
+            self.assertTrue(dest.is_file())
+            self.assertTrue(os.access(dest, os.X_OK))
+            self.assertIn(nymsplit.WRAPPER_MARKER, dest.read_text(encoding="utf-8"))
+            removed = nymsplit.sync_wrappers(
+                [],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=exclude,
+            )
+            self.assertEqual(removed, [])
+            self.assertFalse(dest.exists())
+
+    def test_sync_wrappers_does_not_clobber_foreign_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "ssh"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            dest = dest_dir / "ssh"
+            dest.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+            dest.chmod(0o755)
+            nymsplit.sync_wrappers(
+                ["ssh"],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=root / "nym-exclude",
+            )
+            self.assertEqual(dest.read_text(encoding="utf-8"), "#!/bin/sh\necho mine\n")
 
 
 class MainTests(unittest.TestCase):

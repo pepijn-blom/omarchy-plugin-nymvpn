@@ -293,6 +293,8 @@ def classify_tunnel_error(state_line: str) -> str:
         return "Device limit reached"
     if "bandwidthexceeded" in compact:
         return "Data allowance exceeded"
+    if "connectionattemptsexceeded" in compact:
+        return "Connection failed (network drop or unreachable)"
     text = redact(state_line)
     lower = text.lower()
     if not lower.startswith("error"):
