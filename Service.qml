@@ -575,6 +575,19 @@ Item {
     Quickshell.execDetached(["omarchy-launch-browser", "https://nym.com/account/create"])
   }
 
+  function forgetAccount() {
+    if (!installed || !accountSet || loginProcess.running) return
+    var wasUp = running || connecting || active
+    _userIntentConnected = false
+    _reconnectRetries = 0
+    autoReconnectTimer.stop()
+    _desired = 0
+    connecting = false
+    actionStatus = "Signing out…"
+    if (wasUp) runAction(["nym-vpnc", "disconnect", "--wait"])
+    runAction(["nym-vpnc", "account", "forget"])
+  }
+
   function setAccount(phrase) {
     if (!installed || loginProcess.running || accountSet || loginPath === "") return
     if (!Model.isMnemonicShape(phrase)) {

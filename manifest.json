@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pepijn-blom.nymvpn",
   "name": "NymVPN",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "author": "Pepijn Blom",
   "license": "MIT",
   "description": "NymVPN status, connect/disconnect, entry and exit country switching, split-tunnel process bypass, and fair-use data usage in the Omarchy bar.",
@@ -37,7 +37,7 @@
       "geoExclusionCountries": "",
       "sentry": false,
       "networkStats": false,
-      "splitExclude": []
+      "splitExclude": ["netbird", "ssh"]
     },
     "schema": [
       {

@@ -59,7 +59,8 @@ Panel {
     return reset !== "" ? text + " · " + reset : text
   }
   readonly property bool pickerOpen: entryPicker.popupOpen || exitPicker.popupOpen || splitPicker.popupOpen
-  readonly property bool settingsOpen: settings.settingsOpen === true
+  property bool settingsExpanded: false
+  readonly property bool settingsOpen: settingsExpanded
   readonly property var splitNames: nym.splitExclude
   readonly property bool splitVisible: nym.installed && nym.splitSupported
   readonly property int splitRowCount: splitNames.length + 2
@@ -316,9 +317,10 @@ Panel {
   }
 
   function setSettingsOpen(open) {
-    persistSettingsOpen(open)
-    if (open) nym.listRunning()
-    if (!open && (focusSection === "setting" || focusSection === "split")) focusSection = "settings"
+    settingsExpanded = open === true
+    persistSettingsOpen(settingsExpanded)
+    if (settingsExpanded) nym.listRunning()
+    if (!settingsExpanded && (focusSection === "setting" || focusSection === "split")) focusSection = "settings"
   }
 
   function ensureCursor() {
@@ -469,6 +471,7 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      setSettingsOpen(false)
       if (!pendingLoginFocus) cursorActive = false
       nym.refresh(true)
       nym.listRunning()
@@ -917,6 +920,18 @@ Panel {
             InfoPair {
               label: "Status"
               value: nym.statusText
+            }
+
+            Button {
+              visible: nym.accountSet
+              text: "Log out"
+              iconText: "󰍃"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              bordered: true
+              enabled: !nym.busy && !nym.loggingIn
+              onClicked: nym.forgetAccount()
             }
           }
 
