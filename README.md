@@ -11,7 +11,7 @@
   <a href="https://omarchy.org/"><img src="https://img.shields.io/badge/Platform-Omarchy%20Linux-00c2cb.svg?style=flat-square" alt="Platform: Omarchy Linux"></a>
   <a href="https://nym.com/"><img src="https://img.shields.io/badge/VPN-NymVPN%20Core-00ebaa.svg?style=flat-square" alt="NymVPN Core"></a>
   <a href="https://quickshell.outfoxxed.me/"><img src="https://img.shields.io/badge/UI-Quickshell%20%2F%20QML-ff4081.svg?style=flat-square" alt="Quickshell / QML"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/Tests-99%20Passed-34d399.svg?style=flat-square" alt="Tests: 99 Passed"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/Tests-98%20Passed-34d399.svg?style=flat-square" alt="Tests: 98 Passed"></a>
 </p>
 
 <p align="center">
@@ -53,7 +53,7 @@
   - Residential exit node preference
   - Custom DNS configuration
   - Daemon-enforced Geo-exclusion (`CN` / `RU`)
-- 🔒 **Privacy-First Sign-in**: The recovery phrase is entered in a masked field and sent to `login.py` on stdin. `nym-vpnc` still requires it as an argument, so the helper overwrites that argument immediately and kills the sign-in process if the phrase stays visible.
+- 🔒 **Privacy-First Sign-in**: The recovery phrase is entered in a masked field and sent to `login.py` on stdin. The helper forwards it to `nym-vpnd` on the local socket. It is never a process argument.
 - ⌨️ **Vim-Inspired Keyboard Workflow**: Fully navigable via keyboard without touching your mouse.
 - 🔌 **Omarchy IPC API**: Full automation support via `omarchy-shell` commands.
 
@@ -220,7 +220,7 @@ This plugin resolves this by deploying **zero-latency bypass wrappers**:
 
 - **Redacted Memory & Logs**: Account addresses (`n1...`) are redacted in helper memory and never persisted in plugin settings.
 - **Zero-Telemetry Default**: Sentry crash reporting and anonymous network statistics default to **off**. Toggling them synchronizes directly with `nym-vpnc sentry` and `nym-vpnc network-stats`.
-- **Protected Recovery Phrase Ingestion**: `login.py` receives the recovery phrase on stdin and never from argv or the environment. `nym-vpnc account set` accepts the phrase only as a command-line argument. With procfs mounted without `hidepid`, `/proc/<pid>/cmdline` is world-readable, not only to the same user. The helper overwrites that argument before the command is allowed to finish, and kills the child if the phrase is still there. Plugin settings do not store the phrase. The daemon keeps the account.
+- **Protected Recovery Phrase Ingestion**: `login.py` receives the recovery phrase on stdin and never from argv or the environment. It is written only into a `StoreAccount` request on the `nym-vpnd` unix socket. The phrase is not placed in a process argument, so it is not visible in `/proc/<pid>/cmdline`. Daemon error text is discarded; the panel only hears a fixed success or failure line. Plugin settings do not store the phrase.
 - **Local Persistence Boundary**: The daemon manages credentials securely in its own keystore; this plugin retains zero credentials.
 
 ---
@@ -258,7 +258,7 @@ make validate
 ```
 
 - `tests/test_status.py`: Covers CLI parser output fixtures and gateway parsing.
-- `tests/test_login.py`: Covers credential ingestion and memory sanitization logic.
+- `tests/test_login.py`: Covers credential ingestion and socket sign-in, including that the phrase is not a process argument.
 - `tests/test_split.py`: Covers PID matching, process resolution, and wrapper lifecycle.
 - `tests/test_model.js`: Covers Javascript state reconciliation and UI logic.
 

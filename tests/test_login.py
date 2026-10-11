@@ -1,10 +1,10 @@
 import io
 import json
-import os
+import socket
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,6 +12,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import account_rpc  # noqa: E402
 import login as nymlogin  # noqa: E402
 
 # Fake words only — not a BIP39 phrase.
@@ -166,85 +167,124 @@ def _run_main(stdin_bytes):
     return code, stdout.getvalue(), stderr.getvalue()
 
 
-class TrustedBinaryTests(unittest.TestCase):
-    def test_user_owned_binary_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fake = Path(tmp) / "nym-vpnc"
-            fake.write_bytes(b"")
-            fake.chmod(0o755)
-            with mock.patch.object(nymlogin.shutil, "which", return_value=str(fake)):
-                self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
+class SocketStoreTests(unittest.TestCase):
+    def test_login_helper_never_spawns_a_process(self):
+        source = (ROOT / "login.py").read_text(encoding="utf-8")
+        self.assertNotIn("Popen", source)
+        self.assertNotIn("subprocess", source)
 
-    def test_root_owned_path_outside_system_dirs_is_rejected(self):
-        target = Path("/tmp/nym-vpnc")
-        fake_stat = os.stat_result((0o100755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
-        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
-             mock.patch.object(Path, "resolve", return_value=target), \
-             mock.patch.object(Path, "stat", return_value=fake_stat):
-            self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
+    def test_phrase_is_not_in_this_process_cmdline(self):
+        seen = {}
+        with self._server(seen=seen) as path:
+            code, out, err = account_rpc.store_account(TWELVE, path)
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertIn(TWELVE, seen["body"])
+        self.assertNotIn(TWELVE, Path("/proc/self/cmdline").read_bytes())
 
-    def test_group_writable_system_binary_is_rejected(self):
-        target = Path("/usr/bin/nym-vpnc")
-        fake_stat = os.stat_result((0o100775, 0, 0, 1, 0, 0, 0, 0, 0, 0))
-        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
-             mock.patch.object(Path, "resolve", return_value=target), \
-             mock.patch.object(Path, "stat", return_value=fake_stat):
-            self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
-
-    def test_root_owned_system_binary_is_accepted(self):
-        target = Path("/usr/bin/nym-vpnc")
-        fake_stat = os.stat_result((0o100755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
-        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
-             mock.patch.object(Path, "resolve", return_value=target), \
-             mock.patch.object(Path, "stat", return_value=fake_stat):
-            self.assertEqual(nymlogin.trusted_system_binary("nym-vpnc"), str(target))
-
-    def test_untrusted_binary_does_not_spawn(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fake = Path(tmp) / "nym-vpnc"
-            fake.write_bytes(b"")
-            fake.chmod(0o755)
-            with mock.patch.object(nymlogin.shutil, "which", return_value=str(fake)), \
-                 mock.patch.object(nymlogin.subprocess, "Popen") as popen:
-                code, out, err = nymlogin.run_account_set(TWELVE)
-        popen.assert_not_called()
-        self.assertEqual(code, 127)
+    def test_rejected_phrase_is_a_fixed_message(self):
+        detail = account_rpc._encode_len_field(10, TWELVE)
+        body = account_rpc._encode_len_field(1, detail)
+        with self._server(body=body) as path:
+            code, out, err = account_rpc.store_account(TWELVE, path)
+        self.assertEqual(code, 1)
+        self.assertEqual(err, "Invalid recovery phrase")
         self.assertNotIn(TWELVE.decode(), out)
         self.assertNotIn(TWELVE.decode(), err)
 
+    def test_auth_refusal_does_not_send_the_phrase(self):
+        seen = {}
+        with self._server(auth=b"\x02", seen=seen) as path:
+            code, _out, err = account_rpc.store_account(TWELVE, path)
+        self.assertEqual(code, 1)
+        self.assertEqual(err, "Could not save account")
+        self.assertNotIn(TWELVE, seen.get("received", b""))
 
-class ScrubTests(unittest.TestCase):
-    def test_scrub_clears_cmdline_or_kills_the_child(self):
-        secret = b"notarealsecretphrasexyz"
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(12)", secret.decode()],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    def test_run_account_set_does_not_call_popen(self):
+        with self._server() as path, \
+             mock.patch.object(account_rpc, "socket_path", return_value=path), \
+             mock.patch.object(subprocess, "Popen", side_effect=AssertionError("spawned")):
+            code, out, err = nymlogin.run_account_set(TWELVE)
+        self.assertEqual((code, out, err), (0, "", ""))
+
+    def _server(self, body=b"", auth=b"\x01", seen=None):
+        return _FakeDaemon(body=body, auth=auth, seen=seen)
+
+
+class _FakeDaemon:
+    def __init__(self, body: bytes, auth: bytes, seen: dict | None) -> None:
+        self.body = body
+        self.auth = auth
+        self.seen = seen if seen is not None else {}
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self._tmp.name) / "nym-vpn.sock")
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._ready = threading.Event()
+
+    def __enter__(self) -> str:
+        self._thread.start()
+        self._ready.wait(2)
+        return self.path
+
+    def __exit__(self, *args) -> None:
+        self._thread.join(3)
+        self._tmp.cleanup()
+
+    def _run(self) -> None:
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(self.path)
+        srv.listen(1)
+        srv.settimeout(5)
+        self._ready.set()
         try:
-            deadline = time.monotonic() + 2
-            cmdline = b""
-            while time.monotonic() < deadline:
-                try:
-                    cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
-                except OSError:
-                    cmdline = b""
-                if secret in cmdline:
+            conn, _addr = srv.accept()
+        except OSError:
+            srv.close()
+            return
+        conn.settimeout(5)
+        try:
+            query = conn.recv(1)
+            self.seen["received"] = query
+            conn.sendall(self.auth)
+            if self.auth != b"\x01":
+                return
+            preface = _recv(conn, 24)
+            self.seen["received"] += preface
+            _read_frame(conn)
+            conn.sendall(account_rpc._frame(0x4, 0, 0))
+            blobs = bytearray()
+            while True:
+                kind, flags, _stream, payload = _read_frame(conn)
+                blobs += payload
+                if kind == 0 and flags & 0x1:
                     break
-                time.sleep(0.02)
-            self.assertIn(secret, cmdline)
-            cleared = nymlogin.hold_until_argv_clear(proc, secret)
-            if cleared:
-                after = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
-                self.assertNotIn(secret, after)
-                self.assertIsNone(proc.poll())
-            else:
-                proc.wait(timeout=2)
-                self.assertIsNotNone(proc.poll())
+            self.seen["received"] += bytes(blobs)
+            self.seen["body"] = bytes(blobs)
+            conn.sendall(account_rpc._frame(0x1, 0x4, 1, bytes([0x88])))
+            message = b"\x00" + len(self.body).to_bytes(4, "big") + self.body
+            conn.sendall(account_rpc._frame(0x0, 0, 1, message))
+            trailers = account_rpc._literal("grpc-status", "0")
+            conn.sendall(account_rpc._frame(0x1, 0x5, 1, trailers))
         finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=2)
+            conn.close()
+            srv.close()
+
+
+def _recv(sock: socket.socket, size: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < size:
+        chunk = sock.recv(size - len(buf))
+        if not chunk:
+            break
+        buf += chunk
+    return bytes(buf)
+
+
+def _read_frame(sock: socket.socket):
+    header = _recv(sock, 9)
+    length = int.from_bytes(header[:3], "big")
+    kind, flags = header[3], header[4]
+    payload = _recv(sock, length) if length else b""
+    return kind, flags, 0, payload
 
 
 if __name__ == "__main__":
