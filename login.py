@@ -1,9 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Store a NymVPN account from a recovery phrase on stdin.
 
 The phrase is never accepted from argv or the environment. It is passed to
-nym-vpnc only for the duration of `account set`, then wiped. Captured CLI
-output is stripped of the phrase before any JSON is printed.
+a root-owned system nym-vpnc for `account set`. The child argv is overwritten
+before the call is allowed to finish; if that overwrite cannot be confirmed,
+the child is killed. Captured CLI output is stripped of the phrase before
+any JSON is printed.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -20,7 +23,8 @@ from pathlib import Path
 
 WORD_RE = re.compile(rb"^[a-z]+$")
 VPNC_TIMEOUT_SEC = 30
-SCRUB_SETTLE_SEC = 0.05
+SCRUB_DEADLINE_SEC = 0.2
+SYSTEM_BINDIRS = ("/usr/bin", "/usr/sbin", "/bin")
 
 PTRACE_ATTACH = 16
 PTRACE_DETACH = 17
@@ -72,7 +76,28 @@ def _emit(payload: dict) -> None:
     sys.stdout.write("\n")
 
 
-def _arg_bounds(pid: int) -> tuple[int, int] | None:
+def trusted_system_binary(name: str) -> str | None:
+    """Return a root-owned, non-writable executable directly under a system bin dir."""
+    found = shutil.which(name)
+    if not found:
+        return None
+    try:
+        real = Path(found).resolve()
+        st = real.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    if real.parent.as_posix() not in SYSTEM_BINDIRS:
+        return None
+    if st.st_uid != 0:
+        return None
+    if st.st_mode & 0o022:
+        return None
+    return str(real)
+
+
+def _proc_fields(pid: int) -> list[str] | None:
     try:
         raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     except OSError:
@@ -80,8 +105,19 @@ def _arg_bounds(pid: int) -> tuple[int, int] | None:
     close = raw.rfind(")")
     if close < 0:
         return None
-    fields = raw[close + 1 :].split()
-    if len(fields) < 47:
+    return raw[close + 1 :].split()
+
+
+def _proc_starttime(pid: int) -> str | None:
+    fields = _proc_fields(pid)
+    if not fields or len(fields) <= 19:
+        return None
+    return fields[19]
+
+
+def _arg_bounds(pid: int) -> tuple[int, int] | None:
+    fields = _proc_fields(pid)
+    if not fields or len(fields) < 47:
         return None
     try:
         start = int(fields[45])
@@ -145,8 +181,10 @@ def _ptrace_mem_write(pid: int, addr: int, data: bytes) -> bool:
         libc.ptrace(PTRACE_DETACH, pid, None, None)
 
 
-def scrub_child_argv(pid: int, secret: bytes) -> bool:
+def scrub_child_argv(pid: int, secret: bytes, starttime: str | None = None) -> bool:
     if not secret:
+        return False
+    if starttime is not None and _proc_starttime(pid) != starttime:
         return False
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
@@ -162,29 +200,95 @@ def scrub_child_argv(pid: int, secret: bytes) -> bool:
     addr = start + idx
     if addr < start or addr + len(secret) > end:
         return False
+    if starttime is not None and _proc_starttime(pid) != starttime:
+        return False
     stars = b"*" * len(secret)
     if _vm_write(pid, addr, stars):
         return True
+    if starttime is not None and _proc_starttime(pid) != starttime:
+        return False
     if _mem_write(pid, addr, stars):
         return True
+    if starttime is not None and _proc_starttime(pid) != starttime:
+        return False
     return _ptrace_mem_write(pid, addr, stars)
 
 
-def _wait_for_exec(pid: int, secret: bytes, timeout: float = 2.0) -> None:
-    path = Path(f"/proc/{pid}/cmdline")
+def _same_process(pid: int, starttime: str | None) -> bool | None:
+    """True when pid still has starttime, False if reused, None if it is gone."""
+    now = _proc_starttime(pid)
+    if now is None:
+        return None
+    if starttime is None:
+        return False
+    return now == starttime
+
+
+def hold_until_argv_clear(
+    proc: subprocess.Popen[str],
+    phrase: bytes,
+    timeout: float = SCRUB_DEADLINE_SEC,
+) -> bool:
+    """Return True only when phrase is no longer in the live cmdline.
+
+    Kills the child when the phrase is still visible at the deadline and the
+    pid has not been reused. A reused pid is left alone.
+    """
     deadline = time.monotonic() + timeout
+    start = _proc_starttime(proc.pid)
     while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return True
+        if start is None:
+            start = _proc_starttime(proc.pid)
+            if start is None:
+                time.sleep(0.001)
+                continue
+        ident = _same_process(proc.pid, start)
+        if ident is False:
+            return False
+        if ident is None:
+            return True
         try:
-            data = path.read_bytes()
+            data = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
         except OSError:
-            return
-        if secret in data or b"nym-vpnc" in data:
-            return
-        time.sleep(0.01)
+            return proc.poll() is not None
+        if phrase in data:
+            scrub_child_argv(proc.pid, phrase, start)
+            if _same_process(proc.pid, start) is False:
+                return False
+            try:
+                after = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
+            except OSError:
+                return proc.poll() is not None
+            if phrase not in after:
+                return True
+        elif b"nym-vpnc" in data:
+            return True
+        time.sleep(0.001)
+    if proc.poll() is not None:
+        return True
+    if start is not None and _same_process(proc.pid, start) is False:
+        return False
+    try:
+        data = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
+    except OSError:
+        data = b""
+    if phrase not in data and (b"nym-vpnc" in data or proc.poll() is not None):
+        return True
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        pass
+    return False
 
 
 def run_account_set(phrase: bytes) -> tuple[int, str, str]:
-    binary = shutil.which("nym-vpnc")
+    binary = trusted_system_binary("nym-vpnc")
     if not binary:
         return 127, "", "nym-vpnc not found"
     try:
@@ -201,19 +305,15 @@ def run_account_set(phrase: bytes) -> tuple[int, str, str]:
         )
     except OSError as exc:
         return 1, "", str(exc)
+    if not hold_until_argv_clear(proc, phrase):
+        return 1, "", "Could not save account"
     try:
-        _wait_for_exec(proc.pid, phrase)
-        time.sleep(SCRUB_SETTLE_SEC)
-        scrub_child_argv(proc.pid, phrase)
-        try:
-            stdout, stderr = proc.communicate(timeout=VPNC_TIMEOUT_SEC)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            return 124, stdout or "", stderr or "timed out"
-        return proc.returncode if proc.returncode is not None else 1, stdout or "", stderr or ""
-    finally:
-        text = ""
+        stdout, stderr = proc.communicate(timeout=VPNC_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        return 124, stdout or "", stderr or "timed out"
+    return proc.returncode if proc.returncode is not None else 1, stdout or "", stderr or ""
 
 
 def _set_from_buffer(buf: bytearray) -> int:

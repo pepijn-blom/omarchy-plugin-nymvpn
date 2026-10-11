@@ -589,7 +589,7 @@ Item {
     loggingIn = true
     lastError = ""
     actionStatus = "Signing in…"
-    loginProcess.command = ["python3", loginPath]
+    loginProcess.command = [loginPath]
     loginProcess.running = true
   }
 

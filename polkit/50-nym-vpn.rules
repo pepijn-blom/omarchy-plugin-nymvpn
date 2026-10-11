@@ -1,5 +1,6 @@
 polkit.addRule(function(action, subject) {
     if (action.id === "com.nymvpn.vpnd.unix-access" &&
+        subject.local && subject.active &&
         (subject.isInGroup("wheel") || subject.isInGroup("nym-vpn"))) {
         return polkit.Result.YES;
     }

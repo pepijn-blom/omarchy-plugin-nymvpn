@@ -1,7 +1,9 @@
 import io
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -164,8 +166,55 @@ def _run_main(stdin_bytes):
     return code, stdout.getvalue(), stderr.getvalue()
 
 
+class TrustedBinaryTests(unittest.TestCase):
+    def test_user_owned_binary_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "nym-vpnc"
+            fake.write_bytes(b"")
+            fake.chmod(0o755)
+            with mock.patch.object(nymlogin.shutil, "which", return_value=str(fake)):
+                self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
+
+    def test_root_owned_path_outside_system_dirs_is_rejected(self):
+        target = Path("/tmp/nym-vpnc")
+        fake_stat = os.stat_result((0o100755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
+             mock.patch.object(Path, "resolve", return_value=target), \
+             mock.patch.object(Path, "stat", return_value=fake_stat):
+            self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
+
+    def test_group_writable_system_binary_is_rejected(self):
+        target = Path("/usr/bin/nym-vpnc")
+        fake_stat = os.stat_result((0o100775, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
+             mock.patch.object(Path, "resolve", return_value=target), \
+             mock.patch.object(Path, "stat", return_value=fake_stat):
+            self.assertIsNone(nymlogin.trusted_system_binary("nym-vpnc"))
+
+    def test_root_owned_system_binary_is_accepted(self):
+        target = Path("/usr/bin/nym-vpnc")
+        fake_stat = os.stat_result((0o100755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(nymlogin.shutil, "which", return_value=str(target)), \
+             mock.patch.object(Path, "resolve", return_value=target), \
+             mock.patch.object(Path, "stat", return_value=fake_stat):
+            self.assertEqual(nymlogin.trusted_system_binary("nym-vpnc"), str(target))
+
+    def test_untrusted_binary_does_not_spawn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "nym-vpnc"
+            fake.write_bytes(b"")
+            fake.chmod(0o755)
+            with mock.patch.object(nymlogin.shutil, "which", return_value=str(fake)), \
+                 mock.patch.object(nymlogin.subprocess, "Popen") as popen:
+                code, out, err = nymlogin.run_account_set(TWELVE)
+        popen.assert_not_called()
+        self.assertEqual(code, 127)
+        self.assertNotIn(TWELVE.decode(), out)
+        self.assertNotIn(TWELVE.decode(), err)
+
+
 class ScrubTests(unittest.TestCase):
-    def test_scrub_overwrites_dummy_cmdline_or_fails_open(self):
+    def test_scrub_clears_cmdline_or_kills_the_child(self):
         secret = b"notarealsecretphrasexyz"
         proc = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(12)", secret.decode()],
@@ -174,6 +223,7 @@ class ScrubTests(unittest.TestCase):
         )
         try:
             deadline = time.monotonic() + 2
+            cmdline = b""
             while time.monotonic() < deadline:
                 try:
                     cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
@@ -183,14 +233,18 @@ class ScrubTests(unittest.TestCase):
                     break
                 time.sleep(0.02)
             self.assertIn(secret, cmdline)
-            ok = nymlogin.scrub_child_argv(proc.pid, secret)
-            self.assertIsInstance(ok, bool)
-            if ok:
+            cleared = nymlogin.hold_until_argv_clear(proc, secret)
+            if cleared:
                 after = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
                 self.assertNotIn(secret, after)
+                self.assertIsNone(proc.poll())
+            else:
+                proc.wait(timeout=2)
+                self.assertIsNotNone(proc.poll())
         finally:
-            proc.kill()
-            proc.wait()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=2)
 
 
 if __name__ == "__main__":

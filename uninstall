@@ -8,6 +8,7 @@ PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="pepijn-blom.nymvpn"
 DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 SHIPPED_RULE="$PLUGIN_DIR/polkit/50-nym-vpn.rules"
+PREVIOUS_RULE="$PLUGIN_DIR/polkit/known-previous/50-nym-vpn.rules"
 POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
 WRAPPER_DIR="${OMARCHY_NYMVPN_WRAPPER_DIR:-$HOME/.local/bin}"
 
@@ -73,11 +74,22 @@ if [[ -d "$HOME/.cache/omarchy-nymvpn" ]]; then
   rm -rf "$HOME/.cache/omarchy-nymvpn"
 fi
 
+polkit_rule_is_known() {
+  [[ -f "$POLKIT_RULE_FILE" ]] || return 1
+  if [[ -f "$SHIPPED_RULE" ]] && cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+    return 0
+  fi
+  if [[ -f "$PREVIOUS_RULE" ]] && cmp -s "$PREVIOUS_RULE" "$POLKIT_RULE_FILE"; then
+    return 0
+  fi
+  return 1
+}
+
 # Clean up polkit rule if requested
 if [[ "$remove_polkit" == true ]]; then
   if [[ -f "$POLKIT_RULE_FILE" ]]; then
-    if [[ -f "$SHIPPED_RULE" ]] && cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
-      echo "==> Removing unchanged Polkit rule at $POLKIT_RULE_FILE (requires sudo)..."
+    if polkit_rule_is_known; then
+      echo "==> Removing known Polkit rule at $POLKIT_RULE_FILE (requires sudo)..."
       if command -v sudo >/dev/null 2>&1; then
         sudo rm -f "$POLKIT_RULE_FILE" || echo "WARNING: Failed to remove $POLKIT_RULE_FILE with sudo." >&2
       else
@@ -102,7 +114,7 @@ echo ""
 echo "Omarchy NymVPN plugin removed."
 
 if [[ "$remove_polkit" == false && -f "$POLKIT_RULE_FILE" ]]; then
-  if [[ -f "$SHIPPED_RULE" ]] && cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+  if polkit_rule_is_known; then
     echo ""
     echo "  Note: /etc/polkit-1/rules.d/50-nym-vpn.rules was left in place."
     echo "        To remove it, run: sudo rm -f $POLKIT_RULE_FILE"

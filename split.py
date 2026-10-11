@@ -12,19 +12,35 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-COMM_MAX = 15
 NAME_MAX = 128
 PATH_MAX = 4096
 SKIP_NAMES = frozenset({"nym-vpnd", "nym-vpnc", "nym-exclude"})
-SKIP_WRAPPER_NAMES = frozenset({"netbird", "tailscaled", "systemd", "nym-vpnd", "nym-vpnc", "nym-exclude"})
+SKIP_WRAPPER_NAMES = frozenset({
+    "netbird",
+    "tailscaled",
+    "systemd",
+    "nym-vpnd",
+    "nym-vpnc",
+    "nym-exclude",
+    "sudo",
+    "su",
+    "pkexec",
+    "doas",
+    "passwd",
+    "chsh",
+    "newgrp",
+    "gpasswd",
+})
 VPNC_TIMEOUT_SEC = 20
 WRAPPER_MARKER = "# omarchy-nymvpn-bypass"
 DEFAULT_BINDIRS = ("/usr/bin", "/usr/sbin", "/bin")
+NYM_EXCLUDE_PATH = Path("/usr/bin/nym-exclude")
 
 
 def normalize_name(value: Any) -> str:
@@ -86,8 +102,6 @@ def process_matches(needle: str, comm: str, exe: str) -> bool:
     comm_n = normalize_name(str(comm or "").strip())
     exe_n = normalize_name(Path(str(exe or "")).name)
     if name == comm_n or name == exe_n:
-        return True
-    if len(comm_n) == COMM_MAX and name.startswith(comm_n):
         return True
     return False
 
@@ -255,20 +269,51 @@ def wrapper_name(value: str) -> str:
     return Path(name).name
 
 
+def _trusted_roots(bindir: str | Path | None) -> list[Path]:
+    if bindir:
+        return [Path(bindir)]
+    return [Path(item) for item in DEFAULT_BINDIRS]
+
+
+def _resolved_direct_child(path: Path, roots: list[Path]) -> Path | None:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    for root in roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved.parent == root_resolved and resolved.is_file():
+            return resolved
+    return None
+
+
 def real_binary(name: str, bindir: str | Path | None = None) -> str:
     needle = normalize_name(name)
     if not needle or is_skipped_name(needle):
         return ""
+    base = Path(needle).name
+    if not base or base in SKIP_WRAPPER_NAMES or is_skipped_name(base):
+        return ""
+    roots = _trusted_roots(bindir)
     if needle.startswith("/"):
         path = Path(needle)
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
-        return ""
-    roots = [Path(bindir)] if bindir else [Path(item) for item in DEFAULT_BINDIRS]
+        if not path.is_file() or not os.access(path, os.X_OK):
+            return ""
+        resolved = _resolved_direct_child(path, roots)
+        if resolved is None or resolved.name != base:
+            return ""
+        return str(resolved)
     for root in roots:
         candidate = root / needle
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        resolved = _resolved_direct_child(candidate, roots)
+        if resolved is None or resolved.name != needle:
+            continue
+        return str(resolved)
     return ""
 
 
@@ -290,12 +335,59 @@ def is_our_wrapper(path: Path) -> bool:
     return WRAPPER_MARKER in text.splitlines()[:4]
 
 
-def _write_wrapper(dest: Path, real: str, exclude_bin: str) -> None:
+def _open_exclusive(tmp: Path) -> int | None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    for _ in range(2):
+        try:
+            return os.open(tmp, flags, 0o755)
+        except OSError:
+            try:
+                if tmp.is_symlink() or (tmp.exists() and not tmp.is_dir()):
+                    tmp.unlink()
+                    continue
+            except OSError:
+                return None
+            return None
+    return None
+
+
+def _write_wrapper(dest: Path, real: str, exclude_bin: str) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".tmp")
-    tmp.write_text(wrapper_script(real, exclude_bin), encoding="utf-8")
-    tmp.chmod(0o755)
-    tmp.replace(dest)
+    fd = _open_exclusive(tmp)
+    if fd is None:
+        return False
+    try:
+        os.write(fd, wrapper_script(real, exclude_bin).encode("utf-8"))
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    try:
+        tmp.chmod(0o755)
+        os.replace(tmp, dest)
+    except OSError:
+        return False
+    return True
+
+
+def trusted_nym_exclude() -> str:
+    try:
+        real = NYM_EXCLUDE_PATH.resolve()
+        info = real.stat()
+    except OSError:
+        return ""
+    if real.as_posix() != "/usr/bin/nym-exclude":
+        return ""
+    if not stat.S_ISREG(info.st_mode):
+        return ""
+    if info.st_uid != 0:
+        return ""
+    if not (info.st_mode & stat.S_ISUID):
+        return ""
+    if info.st_mode & 0o022:
+        return ""
+    return str(real)
 
 
 def sync_wrappers(
@@ -306,13 +398,13 @@ def sync_wrappers(
     exclude_bin: str | Path | None = None,
 ) -> list[str]:
     dest_root = Path(wrapper_dir) if wrapper_dir else default_wrapper_dir()
-    exclude = str(exclude_bin) if exclude_bin else (shutil.which("nym-exclude") or "")
+    exclude = str(exclude_bin) if exclude_bin else trusted_nym_exclude()
     wanted: dict[str, str] = {}
     if exclude:
         for name in normalize_names(names):
             dest_name = wrapper_name(name)
             real = real_binary(name, bindir=bindir)
-            if not dest_name or not real:
+            if not dest_name or not real or Path(real).name != dest_name:
                 continue
             wanted[dest_name] = real
     installed: list[str] = []
@@ -321,7 +413,8 @@ def sync_wrappers(
             dest = dest_root / dest_name
             if dest.exists() and not is_our_wrapper(dest):
                 continue
-            _write_wrapper(dest, real, exclude)
+            if not _write_wrapper(dest, real, exclude):
+                continue
             installed.append(dest_name)
     if dest_root.is_dir():
         for entry in dest_root.iterdir():

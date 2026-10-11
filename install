@@ -8,6 +8,7 @@ PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="pepijn-blom.nymvpn"
 DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 SHIPPED_RULE="$PLUGIN_DIR/polkit/50-nym-vpn.rules"
+PREVIOUS_RULE="$PLUGIN_DIR/polkit/known-previous/50-nym-vpn.rules"
 POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
 PACKAGED_RULE="/usr/share/polkit-1/rules.d/50-nym-vpn.rules"
 
@@ -61,6 +62,19 @@ if [[ "$install_polkit" == true ]]; then
   elif [[ -f "$POLKIT_RULE_FILE" ]]; then
     if cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
       echo "==> Polkit rule at $POLKIT_RULE_FILE is already up to date."
+    elif [[ -f "$PREVIOUS_RULE" ]] && cmp -s "$PREVIOUS_RULE" "$POLKIT_RULE_FILE"; then
+      echo "==> Replacing previous Polkit rule at $POLKIT_RULE_FILE (requires sudo)..."
+      if command -v sudo >/dev/null 2>&1; then
+        if sudo install -D -m 0644 "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+          echo "    Polkit rule updated at $POLKIT_RULE_FILE"
+        else
+          echo "WARNING: Failed to update Polkit rule with sudo. You can install it manually:" >&2
+          echo "    sudo install -D -m 0644 \"$SHIPPED_RULE\" \"$POLKIT_RULE_FILE\"" >&2
+        fi
+      else
+        echo "WARNING: sudo not found. You can install the rule manually:" >&2
+        echo "    install -D -m 0644 \"$SHIPPED_RULE\" \"$POLKIT_RULE_FILE\"" >&2
+      fi
     else
       echo "WARNING: Existing Polkit rule at $POLKIT_RULE_FILE differs from shipped rule." >&2
       echo "         Leaving untouched to avoid overwriting custom configuration." >&2
@@ -99,6 +113,7 @@ rsync -a --delete \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude 'tests/' \
+  --exclude 'docs/' \
   --exclude '*.pyc' \
   --exclude '.gitignore' \
   --exclude '.lazygithub.yaml' \

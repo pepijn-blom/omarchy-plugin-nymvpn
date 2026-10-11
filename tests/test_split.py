@@ -76,6 +76,16 @@ class ProcessMatchTests(unittest.TestCase):
             nymsplit.process_matches("google-chrome-stable", comm, "/usr/bin/google-chrome-stable")
         )
 
+    def test_truncated_comm_does_not_match_different_binary(self):
+        comm = "google-chrome-s"
+        self.assertEqual(len(comm), 15)
+        self.assertFalse(
+            nymsplit.process_matches("google-chrome-stable", comm, "/usr/bin/google-chrome-beta")
+        )
+
+    def test_truncated_comm_without_exe_does_not_match(self):
+        self.assertFalse(nymsplit.process_matches("google-chrome-stable", "google-chrome-s", ""))
+
     def test_unrelated_name_does_not_match(self):
         self.assertFalse(nymsplit.process_matches("agy", "firefox", "/usr/lib/firefox/firefox"))
 
@@ -309,6 +319,117 @@ class WrapperTests(unittest.TestCase):
                 exclude_bin=root / "nym-exclude",
             )
             self.assertEqual(dest.read_text(encoding="utf-8"), "#!/bin/sh\necho mine\n")
+
+    def test_sync_wrappers_skips_path_outside_trusted_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside"
+            outside.mkdir()
+            real = outside / "ssh"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            bindir = root / "trusted"
+            bindir.mkdir()
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            exclude = root / "nym-exclude"
+            exclude.write_text("#!/bin/sh\n", encoding="utf-8")
+            exclude.chmod(0o755)
+            installed = nymsplit.sync_wrappers(
+                [str(real)],
+                wrapper_dir=dest_dir,
+                bindir=bindir,
+                exclude_bin=exclude,
+            )
+            self.assertEqual(installed, [])
+            self.assertFalse((dest_dir / "ssh").exists())
+
+    def test_sync_wrappers_installs_trusted_dir_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "ssh"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            exclude = root / "nym-exclude"
+            exclude.write_text("#!/bin/sh\n", encoding="utf-8")
+            exclude.chmod(0o755)
+            installed = nymsplit.sync_wrappers(
+                ["ssh"],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=exclude,
+            )
+            dest = dest_dir / "ssh"
+            self.assertEqual(installed, ["ssh"])
+            text = dest.read_text(encoding="utf-8")
+            self.assertIn(f"exec {exclude} {real}", text)
+
+    def test_sync_wrappers_skips_auth_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "sudo"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            exclude = root / "nym-exclude"
+            exclude.write_text("#!/bin/sh\n", encoding="utf-8")
+            exclude.chmod(0o755)
+            installed = nymsplit.sync_wrappers(
+                ["sudo"],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=exclude,
+            )
+            self.assertEqual(installed, [])
+            self.assertFalse((dest_dir / "sudo").exists())
+
+    def test_write_wrapper_does_not_follow_tmp_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "ssh"
+            real.write_text("#!/bin/sh\n", encoding="utf-8")
+            real.chmod(0o755)
+            victim = root / "victim"
+            victim.write_text("keep", encoding="utf-8")
+            dest_dir = root / "bin"
+            dest_dir.mkdir()
+            (dest_dir / "ssh.tmp").symlink_to(victim)
+            exclude = root / "nym-exclude"
+            exclude.write_text("#!/bin/sh\n", encoding="utf-8")
+            exclude.chmod(0o755)
+            installed = nymsplit.sync_wrappers(
+                ["ssh"],
+                wrapper_dir=dest_dir,
+                bindir=root,
+                exclude_bin=exclude,
+            )
+            self.assertEqual(installed, ["ssh"])
+            self.assertEqual(victim.read_text(encoding="utf-8"), "keep")
+            self.assertFalse((dest_dir / "ssh").is_symlink())
+            self.assertIn(nymsplit.WRAPPER_MARKER, (dest_dir / "ssh").read_text(encoding="utf-8"))
+
+
+class NymExcludeTests(unittest.TestCase):
+    def test_requires_setuid_root_at_system_path(self):
+        target = Path("/usr/bin/nym-exclude")
+        plain = os.stat_result((0o100755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(Path, "resolve", return_value=target), \
+             mock.patch.object(Path, "stat", return_value=plain):
+            self.assertEqual(nymsplit.trusted_nym_exclude(), "")
+        setuid = os.stat_result((0o104755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(Path, "resolve", return_value=target), \
+             mock.patch.object(Path, "stat", return_value=setuid):
+            self.assertEqual(nymsplit.trusted_nym_exclude(), "/usr/bin/nym-exclude")
+
+    def test_rejects_resolved_path_outside_usr_bin(self):
+        moved = Path("/usr/local/bin/nym-exclude")
+        setuid = os.stat_result((0o104755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(Path, "resolve", return_value=moved), \
+             mock.patch.object(Path, "stat", return_value=setuid):
+            self.assertEqual(nymsplit.trusted_nym_exclude(), "")
 
 
 class MainTests(unittest.TestCase):
