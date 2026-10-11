@@ -56,7 +56,7 @@ Inside the panel:
 ```javascript
 polkit.addRule(function(action, subject) {
     if (action.id === "com.nymvpn.vpnd.unix-access" &&
-        (subject.isInGroup("wheel") || subject.isInGroup("nym-vpn"))) {
+        (subject.isInGroup("wheel") || subject.isInGroup("nym-vpn") || subject.isInGroup("sudo"))) {
         return polkit.Result.YES;
     }
 });
@@ -87,7 +87,7 @@ If the icon does not appear after the first install, run `omarchy restart shell`
 ## Usage
 
 - **Bar:** left click for the panel, right click to connect/disconnect, middle click to refresh. Right click does not start a tunnel when no account is stored — it opens the panel and focuses sign-in.
-- **Bypass VPN:** under Settings, add process names or absolute paths that should skip the tunnel (for example `ssh`, `/usr/bin/ssh`, or `agy`). Type a name or path even if the process is not running yet, or pick from what is running. Linux NymVPN only supports exclude-by-PID, which is too late for short-lived tools like `ssh` (they connect before the next PID sync). For those, the plugin installs a `nym-exclude` wrapper in `~/.local/bin` so new processes start outside the tunnel. Attaching a running PID does not migrate sockets already opened through the tunnel — restart the app, or reconnect, after adding it.
+- **Bypass VPN:** under Settings, add process names or absolute paths that should skip the tunnel (for example `ssh` or `/usr/bin/ssh`). Type a name or path even if the process is not running yet, or pick from what is running. Linux NymVPN only supports exclude-by-PID, which is too late for short-lived tools like `ssh` (they connect before the next PID sync). For those, the plugin installs a `nym-exclude` wrapper in `~/.local/bin` so new processes start outside the tunnel. Attaching a running PID does not migrate sockets already opened through the tunnel — restart the app, or reconnect, after adding it.
 - **Sign in:** if the panel shows no account on this device, paste your recovery phrase and choose Sign in (or Create account to open the Nym site). The power switch, `t`, and `toggleVpn` / `connectVpn` IPC all refuse connect until then.
 - **IPC:** `omarchy-shell shell summon pepijn-blom.nymvpn`, `omarchy-shell pepijn-blom.nymvpn toggleVpn`, `omarchy-shell pepijn-blom.nymvpn status`. Blocked connects return `Sign in to connect` (or `nym-vpnd is not running`) instead of `ok`.
 
