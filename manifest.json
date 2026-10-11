@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pepijn-blom.nymvpn",
   "name": "NymVPN",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "Pepijn Blom",
   "license": "MIT",
   "description": "NymVPN status, connect/disconnect, entry and exit country switching, split-tunnel process bypass, and fair-use data usage in the Omarchy bar.",
@@ -35,8 +35,8 @@
       "profile": "fastest",
       "geoExclusion": false,
       "geoExclusionCountries": "",
-      "sentry": true,
-      "networkStats": true,
+      "sentry": false,
+      "networkStats": false,
       "splitExclude": []
     },
     "schema": [
@@ -150,14 +150,14 @@
         "type": "boolean",
         "label": "Crash reporting (Sentry)",
         "description": "Send crash reports to Nym to help fix bugs. Disable for complete telemetric silence.",
-        "defaultValue": true
+        "defaultValue": false
       },
       {
         "key": "networkStats",
         "type": "boolean",
         "label": "Anonymous network stats",
         "description": "Share anonymous network health and routing statistics to help maintain the decentralized Nym network.",
-        "defaultValue": true
+        "defaultValue": false
       },
       {
         "key": "refreshIntervalSec",

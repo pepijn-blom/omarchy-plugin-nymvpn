@@ -458,7 +458,7 @@ def parse_geo_exclusion_get(raw: str) -> dict[str, Any]:
 
 
 def parse_sentry_get(raw: str) -> dict[str, Any]:
-    enabled = True
+    enabled = False
     for line in str(raw or "").splitlines():
         if "sentry integration:" in line.lower():
             enabled = _is_on(line.split(":", 1)[-1])
@@ -467,7 +467,7 @@ def parse_sentry_get(raw: str) -> dict[str, Any]:
 
 
 def parse_network_stats_get(raw: str) -> dict[str, Any]:
-    enabled = True
+    enabled = False
     for line in str(raw or "").splitlines():
         if "anonymous network statistics collection:" in line.lower():
             enabled = _is_on(line.split(":", 1)[-1])
@@ -635,8 +635,8 @@ def default_snapshot() -> dict[str, Any]:
         "profileSupported": False,
         "geoExclusion": False,
         "geoExclusionCountries": "",
-        "sentry": True,
-        "networkStats": True,
+        "sentry": False,
+        "networkStats": False,
         "lastError": "",
     }
 
@@ -720,8 +720,8 @@ def merge_snapshot(
     network_stats = network_stats or {}
     snap["geoExclusion"] = bool(geo_exclusion.get("geoExclusion"))
     snap["geoExclusionCountries"] = str(geo_exclusion.get("geoExclusionCountries") or "")
-    snap["sentry"] = bool(sentry.get("sentry", True))
-    snap["networkStats"] = bool(network_stats.get("networkStats", True))
+    snap["sentry"] = bool(sentry.get("sentry", False))
+    snap["networkStats"] = bool(network_stats.get("networkStats", False))
     snap["profile"] = derive_profile(
         snap["twoHop"],
         snap["circumvention"],

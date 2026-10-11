@@ -31,8 +31,8 @@ Item {
   property bool profileSupported: false
   property bool geoExclusion: false
   property string geoExclusionCountries: ""
-  property bool sentry: true
-  property bool networkStats: true
+  property bool sentry: false
+  property bool networkStats: false
   property bool diagnosing: false
   property string diagnosticSummary: ""
   property string statusText: "Checking…"
@@ -133,8 +133,8 @@ Item {
     profileSupported = parsed.profileSupported === true
     geoExclusion = parsed.geoExclusion === true
     geoExclusionCountries = String(parsed.geoExclusionCountries !== undefined && parsed.geoExclusionCountries !== null ? parsed.geoExclusionCountries : "")
-    sentry = parsed.sentry !== false
-    networkStats = parsed.networkStats !== false
+    sentry = parsed.sentry === true
+    networkStats = parsed.networkStats === true
     statusText = String(parsed.statusText || (installed ? "Disconnected" : "Not installed"))
     state = String(parsed.state || "Unknown")
     entryCountry = String(parsed.entryCountry || "")

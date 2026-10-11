@@ -33,8 +33,8 @@ function defaultStatus() {
     profileSupported: false,
     geoExclusion: false,
     geoExclusionCountries: "",
-    sentry: true,
-    networkStats: true,
+    sentry: false,
+    networkStats: false,
     splitSupported: true,
     splitExclude: [],
     splitAttached: []

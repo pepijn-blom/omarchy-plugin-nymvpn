@@ -1,10 +1,43 @@
 #!/usr/bin/env bash
-# Uninstall the Omarchy NymVPN bar plugin
+# omarchy:summary=Uninstall the Omarchy NymVPN bar plugin
+# omarchy:args=[--polkit]
 
 set -euo pipefail
 
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="pepijn-blom.nymvpn"
 DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+SHIPPED_RULE="$PLUGIN_DIR/polkit/50-nym-vpn.rules"
+POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
+WRAPPER_DIR="${OMARCHY_NYMVPN_WRAPPER_DIR:-$HOME/.local/bin}"
+
+remove_polkit=false
+
+usage() {
+  echo "Usage: ./uninstall [--polkit]"
+  echo ""
+  echo "Options:"
+  echo "  --polkit       Also remove /etc/polkit-1/rules.d/50-nym-vpn.rules if unchanged"
+  echo "  -h, --help     Show this help message"
+}
+
+while (($#)); do
+  case "$1" in
+    --polkit)
+      remove_polkit=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "uninstall: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 echo "=========================================="
 echo "    Uninstalling Omarchy NymVPN Plugin"
@@ -14,6 +47,46 @@ echo ""
 if command -v omarchy-plugin-disable >/dev/null 2>&1; then
   echo "==> Disabling $PLUGIN_ID..."
   omarchy-plugin-disable "$PLUGIN_ID" 2>/dev/null || true
+fi
+
+# Clean up any bypass wrappers created by split-tunneling
+if [[ -d "$WRAPPER_DIR" ]]; then
+  for f in "$WRAPPER_DIR"/*; do
+    [[ -f "$f" ]] || continue
+    size=$(wc -c <"$f" 2>/dev/null || echo 999999)
+    if (( size <= 4096 )); then
+      if head -n 4 "$f" 2>/dev/null | grep -Fxq "# omarchy-nymvpn-bypass"; then
+        echo "==> Removing bypass wrapper: $f"
+        rm -f "$f"
+      fi
+    fi
+  done
+fi
+
+# Clean up gateway cache
+if [[ -n "${XDG_CACHE_HOME:-}" && -d "$XDG_CACHE_HOME/omarchy-nymvpn" ]]; then
+  echo "==> Removing cache: $XDG_CACHE_HOME/omarchy-nymvpn"
+  rm -rf "$XDG_CACHE_HOME/omarchy-nymvpn"
+fi
+if [[ -d "$HOME/.cache/omarchy-nymvpn" ]]; then
+  echo "==> Removing cache: $HOME/.cache/omarchy-nymvpn"
+  rm -rf "$HOME/.cache/omarchy-nymvpn"
+fi
+
+# Clean up polkit rule if requested
+if [[ "$remove_polkit" == true ]]; then
+  if [[ -f "$POLKIT_RULE_FILE" ]]; then
+    if [[ -f "$SHIPPED_RULE" ]] && cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+      echo "==> Removing unchanged Polkit rule at $POLKIT_RULE_FILE (requires sudo)..."
+      if command -v sudo >/dev/null 2>&1; then
+        sudo rm -f "$POLKIT_RULE_FILE" || echo "WARNING: Failed to remove $POLKIT_RULE_FILE with sudo." >&2
+      else
+        echo "WARNING: sudo not found; remove manually: rm -f $POLKIT_RULE_FILE" >&2
+      fi
+    else
+      echo "WARNING: $POLKIT_RULE_FILE differs from shipped rule; leaving untouched." >&2
+    fi
+  fi
 fi
 
 if [[ -d "$DEST" ]]; then
@@ -27,3 +100,12 @@ fi
 
 echo ""
 echo "Omarchy NymVPN plugin removed."
+
+if [[ "$remove_polkit" == false && -f "$POLKIT_RULE_FILE" ]]; then
+  if [[ -f "$SHIPPED_RULE" ]] && cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+    echo ""
+    echo "  Note: /etc/polkit-1/rules.d/50-nym-vpn.rules was left in place."
+    echo "        To remove it, run: sudo rm -f $POLKIT_RULE_FILE"
+    echo "        or re-run: ./uninstall --polkit"
+  fi
+fi

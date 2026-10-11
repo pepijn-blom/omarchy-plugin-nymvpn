@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
 # omarchy:summary=Install the Omarchy NymVPN bar plugin
-# omarchy:args=[--no-enable] [--uninstall]
+# omarchy:args=[--no-enable] [--polkit] [--uninstall]
 
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="pepijn-blom.nymvpn"
 DEST="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+SHIPPED_RULE="$PLUGIN_DIR/polkit/50-nym-vpn.rules"
+POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
+PACKAGED_RULE="/usr/share/polkit-1/rules.d/50-nym-vpn.rules"
+
 enable_after=true
+install_polkit=false
 
 usage() {
-  echo "Usage: ./install [--no-enable] [--uninstall]"
+  echo "Usage: ./install [--no-enable] [--polkit] [--uninstall]"
+  echo ""
+  echo "Options:"
+  echo "  --no-enable    Install without automatically enabling on the bar"
+  echo "  --polkit       Install Polkit rule in /etc to avoid password prompts"
+  echo "  --uninstall    Run ./uninstall to remove the plugin"
+  echo "  -h, --help     Show this help message"
 }
 
 while (($#)); do
@@ -19,8 +30,13 @@ while (($#)); do
       enable_after=false
       shift
       ;;
+    --polkit)
+      install_polkit=true
+      shift
+      ;;
     --uninstall)
-      exec "$PLUGIN_DIR/uninstall"
+      shift
+      exec "$PLUGIN_DIR/uninstall" "$@"
       ;;
     -h|--help)
       usage
@@ -39,22 +55,31 @@ echo "    Installing Omarchy NymVPN Plugin"
 echo "=========================================="
 echo ""
 
-POLKIT_RULE_FILE="/etc/polkit-1/rules.d/50-nym-vpn.rules"
-if [[ ! -f "$POLKIT_RULE_FILE" && ! -f "/usr/share/polkit-1/rules.d/50-nym-vpn.rules" ]]; then
-  echo "==> Configuring Polkit rule for NymVPN daemon access (requires sudo)..."
-  if command -v sudo >/dev/null 2>&1; then
-    sudo mkdir -p "/etc/polkit-1/rules.d"
-    sudo tee "$POLKIT_RULE_FILE" >/dev/null << 'EOF'
-polkit.addRule(function(action, subject) {
-    if (action.id === "com.nymvpn.vpnd.unix-access" &&
-        (subject.isInGroup("wheel") || subject.isInGroup("nym-vpn") || subject.isInGroup("sudo"))) {
-        return polkit.Result.YES;
-    }
-});
-EOF
-    echo "    Polkit rule installed at $POLKIT_RULE_FILE"
+if [[ "$install_polkit" == true ]]; then
+  if [[ ! -f "$SHIPPED_RULE" ]]; then
+    echo "WARNING: Shipped Polkit rule not found at $SHIPPED_RULE" >&2
+  elif [[ -f "$POLKIT_RULE_FILE" ]]; then
+    if cmp -s "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+      echo "==> Polkit rule at $POLKIT_RULE_FILE is already up to date."
+    else
+      echo "WARNING: Existing Polkit rule at $POLKIT_RULE_FILE differs from shipped rule." >&2
+      echo "         Leaving untouched to avoid overwriting custom configuration." >&2
+    fi
+  elif [[ -f "$PACKAGED_RULE" ]]; then
+    echo "==> Package-provided Polkit rule detected at $PACKAGED_RULE."
   else
-    echo "WARNING: sudo not found. Please ensure $POLKIT_RULE_FILE exists to avoid password prompt loops." >&2
+    echo "==> Configuring Polkit rule for NymVPN daemon access (requires sudo)..."
+    if command -v sudo >/dev/null 2>&1; then
+      if sudo install -D -m 0644 "$SHIPPED_RULE" "$POLKIT_RULE_FILE"; then
+        echo "    Polkit rule installed at $POLKIT_RULE_FILE"
+      else
+        echo "WARNING: Failed to install Polkit rule with sudo. You can install it manually:" >&2
+        echo "    sudo install -D -m 0644 \"$SHIPPED_RULE\" \"$POLKIT_RULE_FILE\"" >&2
+      fi
+    else
+      echo "WARNING: sudo not found. You can install the rule manually:" >&2
+      echo "    install -D -m 0644 \"$SHIPPED_RULE\" \"$POLKIT_RULE_FILE\"" >&2
+    fi
   fi
 fi
 
@@ -76,6 +101,7 @@ rsync -a --delete \
   --exclude 'tests/' \
   --exclude '*.pyc' \
   --exclude '.gitignore' \
+  --exclude '.lazygithub.yaml' \
   "$PLUGIN_DIR/" "$DEST/"
 
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then
@@ -102,6 +128,14 @@ echo "  • Left click the icon for locations and data usage"
 echo "  • Right click toggles the tunnel"
 echo "  • Middle click refreshes status"
 echo ""
+
+if [[ "$install_polkit" == false && ! -f "$POLKIT_RULE_FILE" && ! -f "$PACKAGED_RULE" ]]; then
+  echo "  Note: Polkit rule not installed. To avoid password prompts during daemon queries,"
+  echo "        re-run: ./install --polkit"
+  echo "        or manually copy: sudo install -D -m 0644 $SHIPPED_RULE $POLKIT_RULE_FILE"
+  echo ""
+fi
+
 if ! command -v nym-vpnc >/dev/null 2>&1; then
   echo "  Note: nym-vpnc was not found on PATH. The widget will show Not installed"
   echo "  until NymVPN is installed."

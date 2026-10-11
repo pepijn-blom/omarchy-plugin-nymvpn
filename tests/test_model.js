@@ -6,6 +6,8 @@ function testParseStatusDefaults() {
   assert.strictEqual(empty.installed, false)
   assert.strictEqual(empty.running, false)
   assert.strictEqual(empty.statusText, "Unavailable")
+  assert.strictEqual(empty.sentry, false)
+  assert.strictEqual(empty.networkStats, false)
   assert.ok(!Object.prototype.hasOwnProperty.call(empty, "accountIdentity"))
 }
 

@@ -391,10 +391,24 @@ class ParseNewFeaturesTests(unittest.TestCase):
     def test_sentry(self):
         self.assertTrue(nymstatus.parse_sentry_get("Sentry integration: on\n")["sentry"])
         self.assertFalse(nymstatus.parse_sentry_get("Sentry integration: off\n")["sentry"])
+        self.assertFalse(nymstatus.parse_sentry_get("")["sentry"])
+        self.assertFalse(nymstatus.parse_sentry_get("unknown output")["sentry"])
 
     def test_network_stats(self):
         self.assertTrue(nymstatus.parse_network_stats_get("Anonymous network statistics collection: on\n")["networkStats"])
         self.assertFalse(nymstatus.parse_network_stats_get("Anonymous network statistics collection: off\n")["networkStats"])
+        self.assertFalse(nymstatus.parse_network_stats_get("")["networkStats"])
+        self.assertFalse(nymstatus.parse_network_stats_get("unknown output")["networkStats"])
+
+    def test_default_snapshot_telemetry_defaults_off(self):
+        snap = nymstatus.default_snapshot()
+        self.assertFalse(snap["sentry"])
+        self.assertFalse(snap["networkStats"])
+
+    def test_merge_snapshot_telemetry_defaults_off(self):
+        snap = nymstatus.merge_snapshot(installed=True, daemon=True)
+        self.assertFalse(snap["sentry"])
+        self.assertFalse(snap["networkStats"])
 
     def test_derive_profile(self):
         self.assertEqual(nymstatus.derive_profile(two_hop=False, circumvention=False), "most-private")
